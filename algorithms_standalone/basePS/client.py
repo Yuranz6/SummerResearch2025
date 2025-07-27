@@ -1,0 +1,889 @@
+import logging
+import math
+import os
+import sys
+import random
+from abc import  abstractmethod
+from copy import deepcopy
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+
+from algorithms.basePS.ps_client_trainer import PSTrainer
+from utils.data_utils import optimizer_to
+from model.FL_VAE import *
+from optim.AdamW import AdamW
+from utils.tool import *
+from utils.set import *
+from data_preprocessing.cifar10.datasets import Dataset_Personalize, Dataset_3Types_ImageData
+import torchvision.transforms as transforms
+from utils.log_info import log_info
+from utils.randaugment4fixmatch import RandAugmentMC, Cutout, RandAugment_no_CutOut 
+from loss_fn.build import FocalLoss
+from utils.validation import VAEPerformanceValidator, SharedDataDistributionValidator, MixedDatasetValidator
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), "../../../")))
+
+class Client(PSTrainer):
+
+    def __init__(self, client_index, train_ori_data, train_ori_targets, test_dataloader, train_data_num,
+                 test_data_num, train_cls_counts_dict, device, args, model_trainer, vae_model, dataset_num):
+        super().__init__(client_index, train_ori_data, train_ori_targets, test_dataloader, train_data_num,
+                         test_data_num, device, args, model_trainer)
+        if args.VAE == True and vae_model is not None:
+            logging.info(f"client {self.client_index} VAE Moel set up")
+            self.vae_model = vae_model
+
+        self.test_dataloader = test_dataloader
+        self.train_ori_data = train_ori_data  
+        self.train_ori_targets = train_ori_targets
+        self.train_cls_counts_dict = train_cls_counts_dict
+        self.dataset_num = dataset_num
+
+        self.local_num_iterations = math.ceil(len(self.train_ori_data) / self.args.batch_size)
+
+# -------------------------VAE optimization tool for different client------------------------#
+        self.vae_optimizer =  AdamW([
+            {'params': self.vae_model.parameters()}
+        ], lr=1.e-3, betas=(0.9, 0.999), weight_decay=1.e-6)
+        self._construct_train_ori_dataloader()
+        if self.args.VAE_adaptive:
+            self._set_local_traindata_property()
+            logging.info(self.local_traindata_property)
+        
+        if self.args.VAE_loss == 'focal':
+            self.loss = FocalLoss(alpha=0.25, gamma=2.0)
+        else: 
+            self.loss = F.cross_entropy
+        
+        # validators1
+        self.vae_validator = VAEPerformanceValidator(device=self.device)
+        self.shared_data_validator = SharedDataDistributionValidator()
+        self.mixed_data_validator = MixedDatasetValidator()
+    def _construct_train_ori_dataloader(self):
+        # ---------------------generate local train dataloader for Fed Step--------------------------#
+        train_ori_transform = transforms.Compose([])
+        if self.args.dataset == 'fmnist':
+            train_ori_transform.transforms.append(transforms.Resize(32))
+        train_ori_transform.transforms.append(transforms.RandomCrop(32, padding=4))
+        train_ori_transform.transforms.append(transforms.RandomHorizontalFlip())
+        if self.args.dataset not in ['fmnist']:
+            train_ori_transform.transforms.append(RandAugmentMC(n=2, m=10))
+        train_ori_transform.transforms.append(transforms.ToTensor())
+        
+        train_ori_dataset = Dataset_Personalize(self.train_ori_data, self.train_ori_targets,
+                                                transform=train_ori_transform)
+        self.local_train_dataloader = torch.utils.data.DataLoader(dataset=train_ori_dataset,
+                                                                  batch_size=32, shuffle=True,
+                                                                  drop_last=False)
+
+    def _attack(self,size, mean, std):  #
+        rand = torch.normal(mean=mean, std=std, size=size).to(self.device)
+        return rand
+
+    def _set_local_traindata_property(self):
+        class_num = len(self.train_cls_counts_dict)
+        clas_counts = [ self.train_cls_counts_dict[key] for key in self.train_cls_counts_dict.keys()]
+        max_cls_counts = max(clas_counts)
+        if self.local_sample_number < self.dataset_num/self.args.client_num_in_total * 0.2:
+            self.local_traindata_property = 1 # 1 means quantity skew is very heavy
+        elif self.local_sample_number > self.dataset_num/self.args.client_num_in_total * 0.2 and max_cls_counts > self.local_sample_number * 0.7:
+            self.local_traindata_property = 2 # 2 means label skew is very heavy
+        else:
+            self.local_traindata_property = None
+
+    def test_local_vae(self, round, epoch, mode):
+
+        self.vae_model.to(self.device)
+        self.vae_model.eval()
+        
+        test_acc_avg = AverageMeter()
+        test_loss_avg = AverageMeter()
+        
+        if self.args.dataset == 'eicu':
+            # For medical data, track predictions for AUPRC
+            all_preds = []
+            all_targets = []
+        
+        with torch.no_grad():
+            for batch_idx, (x, y) in enumerate(self.test_dataloader):
+                x, y = x.to(self.device), y.to(self.device)
+                batch_size = x.size(0)
+                
+                # Get classifier predictions
+                output = self.vae_model.classifier_test(x)
+                
+                if self.args.dataset == 'eicu':
+                    # Binary classification
+                    y_float = y.float()
+                    if output.dim() > 1 and output.size(-1) == 1:
+                        output = output.squeeze(-1)
+                    
+                    loss = F.binary_cross_entropy_with_logits(output, y_float)
+                    probs = torch.sigmoid(output)
+                    
+                    # Collect for AUPRC
+                    all_preds.extend(probs.cpu().numpy())
+                    all_targets.extend(y_float.cpu().numpy())
+                    
+                    # Calculate accuracy for logging
+                    preds = (probs > 0.5).float()
+                    correct = (preds == y_float).float().sum()
+                    accuracy = correct / batch_size * 100
+                    test_acc_avg.update(accuracy.item(), batch_size)
+                else:
+                    # Original multi-class
+                    loss = F.cross_entropy(output, y)
+                    prec1, _ = accuracy(output.data, y)
+                    test_acc_avg.update(prec1.item(), batch_size)
+                
+                test_loss_avg.update(loss.data.item(), batch_size)
+        
+        # Calculate and log metrics
+        if self.args.dataset == 'eicu':
+            from sklearn.metrics import average_precision_score
+            auprc = average_precision_score(all_targets, all_preds)
+            logging.info("| VAE Testing Round %d Epoch %d | Test Loss: %.4f | Test Acc: %.4f | AUPRC: %.4f" %
+                        (round, epoch, test_loss_avg.avg, test_acc_avg.avg, auprc))
+        else:
+            logging.info("| VAE Testing Round %d Epoch %d | Test Loss: %.4f | Test Acc: %.4f" %
+                        (round, epoch, test_loss_avg.avg, test_acc_avg.avg))
+
+    def aug_classifier_train(self, round, epoch, optimizer, aug_trainloader):
+        self.vae_model.train()
+        self.vae_model.training = True
+
+        for batch_idx, (x, y) in enumerate(aug_trainloader):
+            x, y, y_b, lam, mixup_index = mixup_data(x, y, alpha=self.args.VAE_alpha)
+            x, y, y_b = x.to(self.device), y.to(self.device).view(-1, ), y_b.to(self.device).view(-1, )
+            # x, y = Variable(x), [Variable(y), Variable(y_b)]
+            x, y = x, [y, y_b]
+            n_iter = round * self.args.VAE_local_epoch + epoch * len(aug_trainloader) + batch_idx
+            optimizer.zero_grad()
+
+            for name, parameter in self.vae_model.named_parameters():
+                if 'classifier' not in name:
+                    parameter.requires_grad = False
+            out = self.vae_model.get_classifier()(x)
+
+            loss = lam * F.cross_entropy(out, y[0]) + (1. - lam) * F.cross_entropy(out, y[1])
+            loss.backward()
+            optimizer.step()
+
+
+
+    def mosaic(self, batch_data):
+        s = 16
+        yc, xc = 16, 16
+        if self.args.dataset =='fmnist':
+            c, w, h = 1, 32, 32
+        else:
+            c, w, h = 3, 32, 32
+        aug_data = torch.zeros((self.args.VAE_aug_batch_size, c, w, h))
+        CutOut = Cutout(n_holes=1, length=16)
+        for k in range(self.args.VAE_aug_batch_size):
+
+            sample = random.sample(range(batch_data.shape[0]), 4)
+            img4 = torch.zeros(batch_data[0].shape)
+
+            left = random.randint(0, 16)
+            up = random.randint(0, 16)
+
+            for i, index in enumerate(sample):
+                if i == 0:  # top left
+                    x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
+                elif i == 1:  # top right
+                    x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
+                elif i == 2:  # bottom left
+                    x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
+                elif i == 3:  # bottom right
+                    x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
+                img4[:, x1a:x2a, y1a:y2a] = batch_data[index][:, left:left + 16, up:up + 16]
+            img4 = CutOut(img4)
+            aug_data[k] = img4
+        return aug_data
+
+    def aug_VAE_train(self, round, epoch, optimizer, aug_trainloader):
+        self.vae_model.train()
+        self.vae_model.training = True
+        self.vae_model.requires_grad_(True)
+
+        for batch_idx, (x, y) in enumerate(aug_trainloader):
+            n_iter = round * self.args.VAE_local_epoch + epoch  * len(aug_trainloader) + batch_idx
+            batch_size = x.size(0)
+            if batch_size < 4:
+                break
+            # using mosaic data train VAE first for get a good initialize
+            aug_data = self.mosaic(x).to(self.device)
+            optimizer.zero_grad()
+
+            if self.args.VAE_curriculum:
+                if epoch < 100:
+                    re = 10 * self.args.VAE_re
+                elif epoch < 200:
+                    re = 5 * self.args.VAE_re
+                else:
+                    re = self.args.VAE_re
+            else:
+                re = self.args.VAE_re
+
+            _, _, aug_gx, aug_mu, aug_logvar, _, _, _ = self.vae_model(aug_data)
+            aug_l1 = F.mse_loss(aug_gx, aug_data)
+            aug_l3 = -0.5 * torch.sum(1 + aug_logvar - aug_mu.pow(2) - aug_logvar.exp())
+            aug_l3 /= self.args.VAE_aug_batch_size * 3 * self.args.VAE_z
+
+
+            aug_loss = re * aug_l1 + self.args.VAE_kl * aug_l3
+
+            aug_loss.backward()
+            optimizer.step()
+
+
+    def train_whole_process(self, round, epoch, optimizer, trainloader):
+        self.vae_model.train()
+        self.vae_model.training = True
+
+        loss_avg = AverageMeter()
+        loss_rec = AverageMeter()
+        loss_ce = AverageMeter()
+        loss_entropy = AverageMeter()
+        loss_kl = AverageMeter()
+        top1 = AverageMeter()
+
+
+        logging.info('\n=> Training Epoch #%d, LR=%.4f' % (epoch, optimizer.param_groups[0]['lr']))
+
+        for batch_idx, (x, y) in enumerate(trainloader):
+            n_iter = round * self.args.VAE_local_epoch + epoch * len(trainloader) + batch_idx
+            x, y = x.to(self.device), y.to(self.device)
+
+            batch_size = x.size(0)
+
+            if self.args.VAE_curriculum and self.args.dataset != 'eicu':
+                if epoch < 10:
+                    re = 10 * self.args.VAE_re
+                elif epoch < 20:
+                    re = 5 * self.args.VAE_re
+                else:
+                    re = self.args.VAE_re
+            else:
+                re = self.args.VAE_re
+
+            optimizer.zero_grad()
+            out, hi, gx, mu, logvar, rx, rx_noise1, rx_noise2 = self.vae_model(x)
+            if self.args.dataset == 'eicu':
+                y = y.float()
+                if out.dim() > 1 and out.size(-1) == 1:
+                    out_binary = out.squeeze(-1)
+                else:
+                    out_binary = out
+                
+                # focal loss for imbalanced data
+                cross_entropy = self.loss(out_binary[:batch_size*2], y.repeat(2))
+                x_ce_loss = self.loss(out_binary[batch_size*2:], y)
+            else:
+                # original multi-class entropy
+                cross_entropy = self.loss(out[:batch_size*2], y.repeat(2)) # classification CE loss on noisy performance sensitive features rx_noise
+                x_ce_loss = self.loss(out[batch_size*2:], y) # CE loss on original features x(bn_x)
+            l1 = F.mse_loss(gx, x) # reconstruction loss on generated features (performance-robust)
+            l2 = cross_entropy
+            l3 = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+            l3 /= batch_size * self.vae_model.latent_dim # KL - Fixed: use actual latent_dim instead of config VAE_z
+            
+            # Add sparsity regularization for medical data
+            if self.args.dataset == 'eicu':
+                sparsity_loss = torch.mean(torch.abs(gx))  # L1 sparsity penalty on reconstruction
+            else:
+                sparsity_loss = 0.0
+
+            #  Add explicit compression constraint from Information Bottleneck
+            # Implement ||rx||₂² ≤ ρ constraint from Equation (9) -  Per-Sample Constraint
+            if self.args.dataset == 'eicu':
+                # Fix 2: Adjust threshold to be reasonable for medical data scale
+                # Target: rx should have 50% of original energy, so ||rx||²/||x||² ≤ 0.25
+                x_squared_norms = torch.norm(x, dim=1) ** 2  # Original data squared norms
+                rho_relative = 0.25  # Target: rx should be 25% of original energy
+                rho = rho_relative * x_squared_norms.mean()  # Adaptive threshold based on data scale
+                
+                rx_squared_norms = torch.norm(rx, dim=1) ** 2  # [batch_size] - squared L2 norms per sample
+                compression_violations = F.relu(rx_squared_norms - rho)  # Per-sample violations
+                compression_penalty = compression_violations.mean()  # Average penalty across batch
+                compression_weight = 0.1  # Weight for compression constraint
+            else:
+                compression_penalty = 0.0
+                compression_weight = 0.0
+
+            # Sparsity weight for medical data
+            sparsity_weight = 0.1 if self.args.dataset == 'eicu' else 0.0
+            
+            if self.args.VAE_adaptive:
+                if self.local_traindata_property == 1 :
+                    loss = 5 * re * l1 + self.args.VAE_ce * l2 + 0.5 * self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss + compression_weight * compression_penalty
+                if self.local_traindata_property == 2 :
+                    loss = re * l1 + 5 * self.args.VAE_ce * l2 + 5 * self.args.VAE_kl * l3 + 5 * self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss + compression_weight * compression_penalty
+                if self.local_traindata_property == None:
+                    loss = re * l1 + self.args.VAE_ce * l2 + self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss + compression_weight * compression_penalty
+            else: 
+                loss = re * l1 + self.args.VAE_ce * l2 + self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss + compression_weight * compression_penalty
+            
+            # Fix 1: Debug print to monitor compression penalty effectiveness
+            if self.args.dataset == 'eicu' and batch_idx % 10 == 0:  # Print every 10 batches
+                print(f"Loss: {loss.data.item():.4f}, Compression penalty: {(compression_weight * compression_penalty).data.item():.6f}, RX squared norms: {rx_squared_norms.mean().item():.4f}")
+                
+            loss.backward()
+            optimizer.step()
+
+
+            # prec1, prec5, correct, pred, class_acc = accuracy(out[:batch_size].data, y[:batch_size].data, topk=(1, 5))
+            loss_avg.update(loss.data.item(), batch_size)
+            loss_rec.update(l1.data.item(), batch_size)
+            loss_ce.update(cross_entropy.data.item(), batch_size)
+            loss_kl.update(l3.data.item(), batch_size)
+            # top1.update(prec1.item(), batch_size) # not needed
+
+            log_info('scalar', 'client {index}:loss'.format(index=self.client_index),
+                     loss_avg.avg,step=n_iter,record_tool=self.args.record_tool, 
+                        wandb_record=self.args.wandb_record)
+            log_info('scalar',  'client {index}:acc'.format(index=self.client_index),
+                     top1.avg,step=n_iter,record_tool=self.args.record_tool, 
+                        wandb_record=self.args.wandb_record)
+
+            if epoch % 10 == 0:
+                if (batch_idx + 1) % 30 == 0:
+                    logging.info('\r')
+                    logging.info(
+                        '| Epoch [%3d/%3d] Iter[%3d/%3d]\t\tLoss: %.4f Loss_rec: %.4f Loss_ce: %.4f Loss_entropy: %.4f Loss_kl: %.4f Acc@1: %.3f%%'
+                        % (epoch, self.args.VAE_local_epoch, batch_idx + 1,
+                           len(trainloader), loss_avg.avg, loss_rec.avg, loss_ce.avg, loss_entropy.avg,
+                           loss_kl.avg, top1.avg))
+
+
+    def train_vae_model(self, round):
+        if self.args.dataset == 'eicu':
+            # Medical-specific VAE training
+            self._train_vae_model_medical(round)
+        else:
+            # Original image VAE training
+            self._train_vae_model_image(round)
+            
+    def _train_vae_model_image(self,round):
+        train_transform = transforms.Compose([])
+        aug_vae_transform_train = transforms.Compose([])
+        if self.args.dataset == 'fmnist':
+            train_transform.transforms.append(transforms.Resize(32))
+            aug_vae_transform_train.transforms.append(transforms.Resize(32))
+        train_transform.transforms.append(transforms.RandomCrop(32, padding=4))
+        train_transform.transforms.append(transforms.RandomHorizontalFlip())
+        if self.args.dataset not in ['fmnist']:
+            train_transform.transforms.append(RandAugmentMC(n=3, m=10))
+        train_transform.transforms.append(transforms.ToTensor())
+
+        aug_vae_transform_train.transforms.append(transforms.RandomCrop(32, padding=4))
+        aug_vae_transform_train.transforms.append(transforms.RandomHorizontalFlip())
+        if self.args.dataset not in ['fmnist']:
+            aug_vae_transform_train.transforms.append(RandAugment_no_CutOut(n=2, m=10))
+        aug_vae_transform_train.transforms.append(transforms.ToTensor())
+        
+
+
+        train_dataset = Dataset_Personalize(self.train_ori_data, self.train_ori_targets, transform=train_transform)
+        aug_vae_dataset = Dataset_Personalize(self.train_ori_data, self.train_ori_targets,
+                                              transform=aug_vae_transform_train)
+        train_dataloader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=32, shuffle=True,
+                                                       drop_last=False)
+        aug_vae_dataloader = torch.utils.data.DataLoader(dataset=aug_vae_dataset, batch_size=32, shuffle=True,
+                                                         drop_last=False)
+
+        logging.info(f"client {self.client_index} is going to train own VAE-model to generate RX GX and RXnoise")
+
+        self.vae_model.to(self.device)
+        start_epoch = 1
+        for epoch in range(start_epoch, start_epoch + self.args.VAE_local_epoch):
+            self.aug_classifier_train(round, epoch, self.vae_optimizer, train_dataloader)
+            if self.args.VAE_adaptive == True:
+                if self.local_traindata_property == 1 or self.local_traindata_property == None:
+                    self.aug_VAE_train(round, epoch, self.vae_optimizer, aug_vae_dataloader)
+            else:
+                self.aug_VAE_train(round, epoch, self.vae_optimizer, aug_vae_dataloader)
+            self.train_whole_process(round, epoch, self.vae_optimizer, train_dataloader)
+        self.vae_model.cpu()
+
+        
+    def _train_vae_model_medical(self, round):
+
+        
+        train_dataset = torch.utils.data.TensorDataset(
+            torch.FloatTensor(self.train_ori_data),
+            torch.LongTensor(self.train_ori_targets)
+        )
+        
+        trainloader = torch.utils.data.DataLoader(
+            train_dataset,
+            batch_size=self.args.VAE_batch_size,
+            shuffle=True,
+            drop_last=True
+        )
+        
+        for epoch in range(self.args.VAE_local_epoch):
+            # eICU medical data is tabular, so skip augmentation steps and go directly to main training
+            self.train_whole_process(round, epoch, self.vae_optimizer, trainloader)
+            
+            if epoch % 50 == 0:
+                self.test_local_vae(round, epoch, 'local')
+                
+        # Validate VAE performance after training completion
+        if round == 0 or round % 5 == 0:  # Validate every 5 rounds initially
+            self.validate_vae_performance(round)
+            self.debug_feature_separation(round)
+            
+    def generate_data_by_vae(self):
+        data = self.train_ori_data
+        targets = self.train_ori_targets
+        if self.args.dataset == 'eicu':
+            train_dataset = torch.utils.data.TensorDataset(
+            torch.FloatTensor(data),
+            torch.LongTensor(targets)
+            )
+        
+            generate_dataloader = torch.utils.data.DataLoader(
+                train_dataset,
+                batch_size=self.args.VAE_batch_size,
+                shuffle=True,
+                drop_last=True
+            )
+        else: # TODO: this part for eicu data will get shape mismatch: x.shape torch.Size([64, 1, 256, 1])
+            generate_transform = transforms.Compose([])
+            if self.args.dataset == 'fmnist':
+                generate_transform.transforms.append(transforms.Resize(32))
+            generate_transform.transforms.append(transforms.ToTensor())
+            
+            generate_dataset = Dataset_Personalize(data, targets, transform=generate_transform)
+            generate_dataloader = torch.utils.data.DataLoader(dataset=generate_dataset, batch_size=self.args.VAE_batch_size,
+                                                            shuffle=False, drop_last=False)
+
+        self.vae_model.to(self.device)
+        self.vae_model.eval()
+
+        
+        with torch.no_grad():
+            for batch_idx, (x, y) in enumerate(generate_dataloader):
+                # distribute data to device
+                x, y = x.to(self.device), y.to(self.device).view(-1, )
+                _, _, gx, _, _, rx, rx_noise1, rx_noise2 = self.vae_model(x)
+
+                batch_size = x.size(0)
+
+                if batch_idx == 0:
+                    self.local_share_data1 = rx_noise1
+                    self.local_share_data2 = rx_noise2
+                    self.local_share_data_y = y
+                else:
+                    self.local_share_data1 = torch.cat((self.local_share_data1, rx_noise1))
+                    self.local_share_data2 = torch.cat((self.local_share_data2, rx_noise2))
+                    self.local_share_data_y = torch.cat((self.local_share_data_y, y))
+
+
+
+
+    # got the classifier parameter from the whole VAE model
+    def get_generate_model_classifer_para(self):
+        return deepcopy(self.vae_model.get_classifier().cpu().state_dict())
+
+    # receive data from server
+    def receive_global_share_data(self, data1, data2, y):
+        '''
+        data: Tensor [num, C, H, W] shared by server collected all clients generated by VAE
+        y: Tenosr [num, ] label corrospond to data
+        '''
+        self.global_share_data1 = data1.cpu()
+        self.global_share_y = y.cpu()
+        self.global_share_data2 = data2.cpu()
+
+
+    def sample_iid_data_from_share_dataset(self,share_data1,share_data2, share_y, share_data_mode = 1):
+        random.seed(random.randint(0,10000))
+        if share_data_mode == 1 and share_data1 is None:
+            raise RuntimeError("Not get shared data TYPE1")
+        if share_data_mode == 2 and share_data2 is None:
+            raise RuntimeError("Not get shared data TYPE2")
+        smaple_num = self.local_sample_number
+        smaple_num_each_cls = smaple_num // self.args.num_classes
+        last = smaple_num - smaple_num_each_cls * self.args.num_classes 
+        np_y = np.array(share_y.cpu())
+        for label in range(self.args.num_classes):
+            indexes = list(np.where(np_y == label)[0])
+            sample = random.sample(indexes, smaple_num_each_cls)
+            if label == 0:
+                if share_data_mode == 1:
+                    epoch_data = share_data1[sample]
+                elif share_data_mode==2:
+                    epoch_data = share_data2[sample]
+                epoch_label = share_y[sample]
+            else:
+                if share_data_mode == 1:
+                    epoch_data = torch.cat((epoch_data, share_data1[sample]))
+                elif share_data_mode ==2:
+                    epoch_data = torch.cat((epoch_data, share_data2[sample]))
+                epoch_label = torch.cat((epoch_label, share_y[sample]))
+
+        last_sample =  random.sample(range(len(share_y)), last) 
+        if share_data_mode == 1:
+            epoch_data = torch.cat((epoch_data, share_data1[last_sample]))
+        elif share_data_mode == 2:
+            epoch_data = torch.cat((epoch_data, share_data2[last_sample]))
+        epoch_label = torch.cat((epoch_label, share_y[last_sample]))
+
+        # statitics
+        unq, unq_cnt = np.unique(np.array(epoch_label.cpu()), return_counts=True)  
+        epoch_data_cls_counts_dict = {unq[i]: unq_cnt[i] for i in range(len(unq))}
+
+        return epoch_data, epoch_label
+
+    def construct_mix_dataloader(self, share_data_mode=1):
+        # this part maybe can be simplified?
+        if self.args.dataset == 'eicu':
+            return self._construct_mix_dataloader_medical(share_data_mode)
+        else:
+            # Original image implementation
+            return self._construct_mix_dataloader_image(share_data_mode)
+        
+        
+    def _construct_mix_dataloader_image(self, share_data1, share_data2, share_y, round):
+
+        # two dataloader inclue shared data from server and local origin dataloader
+        train_ori_transform = transforms.Compose([])
+        if self.args.dataset == 'fmnist':
+            train_ori_transform.transforms.append(transforms.Resize(32))
+        train_ori_transform.transforms.append(transforms.RandomCrop(32, padding=4))
+        train_ori_transform.transforms.append(transforms.RandomHorizontalFlip())
+        if self.args.dataset not in ['fmnist']:
+            train_ori_transform.transforms.append(RandAugmentMC(n=3, m=10))
+        train_ori_transform.transforms.append(transforms.ToTensor())
+        # train_ori_transform.transforms.append(transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)))
+
+        train_share_transform = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            #Aug_Cutout(),
+        ])
+        epoch_data1, epoch_label1 = self.sample_iid_data_from_share_dataset(share_data1, share_data2, share_y, share_data_mode=1)
+        epoch_data2, epoch_label2 = self.sample_iid_data_from_share_dataset(share_data1, share_data2, share_y, share_data_mode=2)
+
+        train_dataset = Dataset_3Types_ImageData(self.train_ori_data, epoch_data1,epoch_data2,
+                                                 self.train_ori_targets,epoch_label1,epoch_label2,
+                                                 transform=train_ori_transform,
+                                                 share_transform=train_share_transform)
+        self.local_train_mixed_dataloader = torch.utils.data.DataLoader(dataset=train_dataset,
+                                                                  batch_size=32, shuffle=True,
+                                                                  drop_last=False)
+        return self.local_train_mixed_dataloader # PROBLEM: Repetitive, change later
+        
+    def _construct_mix_dataloader_medical(self, share_data_mode=1):
+
+        from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
+        
+        # Local dataset
+        local_dataset = TensorDataset(
+            torch.FloatTensor(self.train_ori_data),
+            torch.LongTensor(self.train_ori_targets)
+        )
+        
+        # Check if  have shared data
+        if hasattr(self, 'global_share_data1') and self.global_share_data1 is not None:
+            # Sample from shared data
+            if share_data_mode == 1:
+                sampled_data, sampled_y = self.sample_iid_data_from_share_dataset(
+                    self.global_share_data1, self.global_share_data2, 
+                    self.global_share_y, share_data_mode=1
+                )
+            else:
+                sampled_data, sampled_y = self.sample_iid_data_from_share_dataset(
+                    self.global_share_data1, self.global_share_data2,
+                    self.global_share_y, share_data_mode=2
+                )
+            
+            # shared dataset
+            shared_dataset = TensorDataset(sampled_data, sampled_y.long())
+            
+            # combine
+            mixed_dataset = ConcatDataset([local_dataset, shared_dataset])
+        else:
+            # during VAE training phase, no shared dataset yet
+            mixed_dataset = local_dataset
+        
+        mixed_dataloader = DataLoader(
+            mixed_dataset,
+            batch_size=self.args.batch_size,
+            shuffle=True,
+            drop_last=True
+        )
+        
+        self.local_train_mixed_dataloader = mixed_dataloader
+        return mixed_dataloader 
+
+    def get_local_share_data(self, noise_mode):  # noise_mode means get RXnoise2 or RXnoise2
+        if self.local_share_data1 is not None and noise_mode == 1:
+            return self.local_share_data1, self.local_share_data_y
+        elif self.local_share_data2 is not None and noise_mode == 2:
+            return self.local_share_data2, self.local_share_data_y
+        else:
+            raise NotImplementedError
+
+    def check_end_epoch(self):
+        return (
+                    self.client_timer.local_outer_iter_idx > 0 and self.client_timer.local_outer_iter_idx % self.local_num_iterations == 0)
+
+
+    def move_vae_to_cpu(self):
+        if str(next(self.vae_model.parameters()).device) == 'cpu':
+            pass
+        else:
+            self.vae_model = self.vae_model.to('cpu')
+
+
+    def move_to_cpu(self):
+        if str(next(self.trainer.model.parameters()).device) == 'cpu':
+            pass
+        else:
+            self.trainer.model = self.trainer.model.to('cpu')
+            # optimizer_to(self.trainer.optimizer, 'cpu')
+
+        if len(list(self.trainer.optimizer.state.values())) > 0:
+            optimizer_to(self.trainer.optimizer, 'cpu')
+
+    def move_to_gpu(self, device):
+        if str(next(self.trainer.model.parameters()).device) == 'cpu':
+            self.trainer.model = self.trainer.model.to(device)
+        else:
+            pass
+
+        # logging.info(self.trainer.optimizer.state.values())
+        if len(list(self.trainer.optimizer.state.values())) > 0:
+            optimizer_to(self.trainer.optimizer, device)
+
+    def lr_schedule(self, num_iterations, warmup_epochs):
+        epochs = self.client_timer.local_outer_epoch_idx
+        iterations = self.client_timer.local_outer_iter_idx
+        if self.args.sched == "no":
+            pass
+        else:
+            if epochs < warmup_epochs:
+                self.trainer.warmup_lr_schedule(iterations)
+            else:
+                # When epoch begins, do lr_schedule.
+                if (iterations > 0 and iterations % num_iterations == 0):
+                    self.trainer.lr_schedule(epochs)
+
+    def train(self, share_data1, share_data2, share_y,
+              round_idx, named_params, params_type='model',
+              global_other_params=None, shared_params_for_simulation=None):
+        '''
+        return:
+        @named_params:   all the parameters in model: {parameters_name: parameters_values}
+        @params_indexes:  None
+        @local_sample_number: the number of traning set in local
+        @other_client_params: in FedAvg is {}
+        @local_train_tracker_info:
+        @local_time_info:  using this by local_time_info['local_time_info'] = {client_index:   , local_comm_round_idx:,   local_outer_epoch_idx:,   ...}
+        @shared_params_for_simulation: not using in FedAvg
+        '''
+
+        if self.args.instantiate_all:
+            self.move_to_gpu(self.device)
+        named_params, params_indexes, local_sample_number, other_client_params, \
+        shared_params_for_simulation = self.algorithm_on_train(share_data1, share_data2, share_y, round_idx,
+                                                               named_params, params_type,
+                                                               global_other_params,
+                                                               shared_params_for_simulation)
+        if self.args.instantiate_all:
+            self.move_to_cpu()
+
+        return named_params, params_indexes, local_sample_number, other_client_params, \
+                shared_params_for_simulation
+
+    def set_vae_para(self, para_dict):
+        self.vae_model.load_state_dict(para_dict)
+
+    def get_vae_para(self):
+        return deepcopy(self.vae_model.cpu().state_dict())
+    
+    def validate_vae_performance(self, round_idx):
+        """
+        Comprehensive VAE validation based on Information Bottleneck principle
+        Should be called after VAE training to assess feature separation quality
+        """
+        if self.args.dataset != 'eicu':
+            logging.info("VAE validation currently only supports medical (eicu) dataset")
+            return
+            
+        logging.info(f"\n{'='*60}")
+        logging.info(f"VAE VALIDATION - Client {self.client_index} - Round {round_idx}")
+        logging.info(f"{'='*60}")
+        
+        # Create validation dataloader
+        val_dataset = torch.utils.data.TensorDataset(
+            torch.FloatTensor(self.train_ori_data[:1000]),  # Use subset for validation
+            torch.LongTensor(self.train_ori_targets[:1000])
+        )
+        val_dataloader = torch.utils.data.DataLoader(
+            val_dataset, batch_size=64, shuffle=False, drop_last=False
+        )
+        
+        # 1. VAE Feature Separation Validation
+        validation_results = self.vae_validator.validate_feature_separation(
+            self.vae_model, val_dataloader, self.args
+        )
+        
+        # 2. Mixed Dataset Validation (if shared data available)
+        if hasattr(self, 'global_share_data1') and self.global_share_data1 is not None:
+            # Create mixed dataloader for comparison
+            mixed_dataloader = self.construct_mix_dataloader(share_data_mode=1)
+            
+            # Create local-only dataloader
+            local_dataset = torch.utils.data.TensorDataset(
+                torch.FloatTensor(self.train_ori_data),
+                torch.LongTensor(self.train_ori_targets)
+            )
+            local_dataloader = torch.utils.data.DataLoader(
+                local_dataset, batch_size=self.args.batch_size, shuffle=True
+            )
+            
+            # Validate mixing effects
+            mixing_results = self.mixed_data_validator.validate_mixing_effects(
+                self, local_dataloader, mixed_dataloader, self.test_dataloader
+            )
+            
+            # 3. Shared Data Quality Validation
+            shared_data_results = self.shared_data_validator.validate_shared_data_quality(
+                self.global_share_data1, self.global_share_y,
+                torch.FloatTensor(self.train_ori_data), torch.LongTensor(self.train_ori_targets)
+            )
+            
+            return {
+                'vae_separation': validation_results,
+                'mixing_effects': mixing_results,
+                'shared_data_quality': shared_data_results
+            }
+        else:
+            logging.info("No shared data available yet - skipping shared data validation")
+            return {'vae_separation': validation_results}
+    
+    def validate_client_heterogeneity(self, all_clients_data):
+        """
+        Analyze heterogeneity across all clients
+        Should be called at server level with all client data
+        """
+        client_indices = list(all_clients_data.keys())
+        self.shared_data_validator.analyze_client_heterogeneity(all_clients_data, client_indices)
+    
+    def debug_feature_separation(self, round_idx):
+        """
+        Debug function to print actual feature values and understand what VAE is generating
+        """
+        if self.args.dataset != 'eicu':
+            return
+            
+        logging.info(f"\n{'='*60}")
+        logging.info(f"FEATURE SEPARATION DEBUG - Client {self.client_index} - Round {round_idx}")
+        logging.info(f"{'='*60}")
+        
+        self.vae_model.eval()
+        self.vae_model.to(self.device)
+        
+        # Take a small sample for debugging
+        sample_data = torch.FloatTensor(self.train_ori_data[:5])  # Just 5 samples
+        sample_targets = torch.LongTensor(self.train_ori_targets[:5])
+        
+        with torch.no_grad():
+            sample_data = sample_data.to(self.device)
+            
+            # Get VAE outputs
+            out, hi, xi, mu, logvar, rx, rx_noise1, rx_noise2 = self.vae_model(sample_data)
+            
+            # Move to CPU for printing
+            x_original = sample_data.cpu()
+            xi_robust = xi.cpu()  # Performance-robust features (VAE reconstruction)
+            rx_sensitive = rx.cpu()  # Performance-sensitive features (x - xi)
+            
+            logging.info(f"Sample shape: {x_original.shape}")
+            logging.info(f"Input data range: [{x_original.min():.4f}, {x_original.max():.4f}]")
+            logging.info(f"Performance-robust (xi) range: [{xi_robust.min():.4f}, {xi_robust.max():.4f}]")
+            logging.info(f"Performance-sensitive (rx) range: [{rx_sensitive.min():.4f}, {rx_sensitive.max():.4f}]")
+            
+            # Statistical comparison
+            x_mean = x_original.mean(dim=0)
+            xi_mean = xi_robust.mean(dim=0)
+            rx_mean = rx_sensitive.mean(dim=0)
+            
+            logging.info(f"Original features mean: {x_mean[:10]}...")  # First 10 features
+            logging.info(f"Performance-robust mean: {xi_mean[:10]}...")
+            logging.info(f"Performance-sensitive mean: {rx_mean[:10]}...")
+            
+            # Check if xi is actually reconstructing x well
+            reconstruction_mse = torch.nn.functional.mse_loss(xi_robust, x_original)
+            logging.info(f"Reconstruction MSE (xi vs x): {reconstruction_mse.item():.6f}")
+            
+            # Check feature norms
+            x_norm = torch.norm(x_original, dim=1).mean()
+            xi_norm = torch.norm(xi_robust, dim=1).mean()
+            rx_norm = torch.norm(rx_sensitive, dim=1).mean()
+            
+            logging.info(f"L2 norms - Original: {x_norm:.4f}, xi: {xi_norm:.4f}, rx: {rx_norm:.4f}")
+            logging.info(f"Compression ratio ||rx||/||x||: {(rx_norm/x_norm):.4f}")
+            
+            # Fix 4: Add squared norm monitoring to align with constraint
+            x_squared_norm = (torch.norm(x_original, dim=1) ** 2).mean()
+            rx_squared_norm = (torch.norm(rx_sensitive, dim=1) ** 2).mean()
+            compression_ratio_squared = rx_squared_norm / x_squared_norm
+            logging.info(f"Squared norm compression ratio ||rx||²/||x||²: {compression_ratio_squared:.4f} (target: ≤0.25)")
+            
+            # Check if reconstruction equation holds: x = xi + rx
+            reconstruction_check = xi_robust + rx_sensitive
+            equation_error = torch.nn.functional.mse_loss(reconstruction_check, x_original)
+            logging.info(f"Equation check |x - (xi + rx)|: {equation_error.item():.8f}")
+            
+            # Feature distribution analysis
+            logging.info("\n--- Feature Distribution Analysis ---")
+            logging.info(f"Original (x) - Mean: {x_original.mean():.4f}, Std: {x_original.std():.4f}")
+            logging.info(f"Robust (xi) - Mean: {xi_robust.mean():.4f}, Std: {xi_robust.std():.4f}")
+            logging.info(f"Sensitive (rx) - Mean: {rx_sensitive.mean():.4f}, Std: {rx_sensitive.std():.4f}")
+            
+            # Correlation analysis
+            x_flat = x_original.flatten()
+            xi_flat = xi_robust.flatten()
+            rx_flat = rx_sensitive.flatten()
+            
+            correlation_x_xi = torch.corrcoef(torch.stack([x_flat, xi_flat]))[0, 1]
+            correlation_x_rx = torch.corrcoef(torch.stack([x_flat, rx_flat]))[0, 1]
+            correlation_xi_rx = torch.corrcoef(torch.stack([xi_flat, rx_flat]))[0, 1]
+            
+            logging.info(f"\n--- Correlation Analysis ---")
+            logging.info(f"Corr(x, xi): {correlation_x_xi:.4f} (should be high - xi reconstructs x)")
+            logging.info(f"Corr(x, rx): {correlation_x_rx:.4f} (residual correlation)")
+            logging.info(f"Corr(xi, rx): {correlation_xi_rx:.4f} (should be low - orthogonal)")
+            
+            # Sample-wise analysis for first sample
+            logging.info(f"\n--- Sample 0 Analysis (Target: {sample_targets[0].item()}) ---")
+            sample_0_x = x_original[0]
+            sample_0_xi = xi_robust[0]
+            sample_0_rx = rx_sensitive[0]
+            
+            # Find top features by absolute value
+            top_x_indices = torch.argsort(torch.abs(sample_0_x), descending=True)[:5]
+            top_xi_indices = torch.argsort(torch.abs(sample_0_xi), descending=True)[:5]
+            top_rx_indices = torch.argsort(torch.abs(sample_0_rx), descending=True)[:5]
+            
+            logging.info(f"Top 5 original features: indices {top_x_indices.tolist()} = {sample_0_x[top_x_indices].tolist()}")
+            logging.info(f"Top 5 robust features: indices {top_xi_indices.tolist()} = {sample_0_xi[top_xi_indices].tolist()}")
+            logging.info(f"Top 5 sensitive features: indices {top_rx_indices.tolist()} = {sample_0_rx[top_rx_indices].tolist()}")
+            
+            logging.info(f"{'='*60}\n")
+
+    @abstractmethod
+    def algorithm_on_train(self, share_data1, share_data2, share_y,round_idx, 
+                           named_params, params_type='model',
+                           global_other_params=None,
+                           shared_params_for_simulation=None):
+        named_params, params_indexes, local_sample_number, other_client_params = None, None, None, None
+        return named_params, params_indexes, local_sample_number, other_client_params, shared_params_for_simulation

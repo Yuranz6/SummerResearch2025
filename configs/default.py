@@ -159,7 +159,7 @@ _C.level = 'INFO' # 'INFO' or 'DEBUG'
 # ---------------------------------------------------------------------------- #
 _C.VAE = False
 _C.VAE_local_epoch = 3
-_C.VAE_d = 32
+_C.VAE_d = 64
 _C.VAE_z = 2048
 _C.VAE_sched = 'cosine'
 _C.VAE_sched_lr_ate_min = 2.e-3

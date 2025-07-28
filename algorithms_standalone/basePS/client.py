@@ -297,39 +297,25 @@ class Client(PSTrainer):
             else:
                 sparsity_loss = 0.0
 
-            #  Add explicit compression constraint from Information Bottleneck
+            #  TODO: Add explicit compression constraint from Information Bottleneck
             # Implement ||rx||₂² ≤ ρ constraint from Equation (9) -  Per-Sample Constraint
-            if self.args.dataset == 'eicu':
-                # Fix 2: Adjust threshold to be reasonable for medical data scale
-                # Target: rx should have 50% of original energy, so ||rx||²/||x||² ≤ 0.25
-                x_squared_norms = torch.norm(x, dim=1) ** 2  # Original data squared norms
-                rho_relative = 0.25  # Target: rx should be 25% of original energy
-                rho = rho_relative * x_squared_norms.mean()  # Adaptive threshold based on data scale
-                
-                rx_squared_norms = torch.norm(rx, dim=1) ** 2  # [batch_size] - squared L2 norms per sample
-                compression_violations = F.relu(rx_squared_norms - rho)  # Per-sample violations
-                compression_penalty = compression_violations.mean()  # Average penalty across batch
-                compression_weight = 0.1  # Weight for compression constraint
-            else:
-                compression_penalty = 0.0
-                compression_weight = 0.0
 
             # Sparsity weight for medical data
             sparsity_weight = 0.1 if self.args.dataset == 'eicu' else 0.0
             
             if self.args.VAE_adaptive:
                 if self.local_traindata_property == 1 :
-                    loss = 5 * re * l1 + self.args.VAE_ce * l2 + 0.5 * self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss + compression_weight * compression_penalty
+                    loss = 5 * re * l1 + self.args.VAE_ce * l2 + 0.5 * self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss 
                 if self.local_traindata_property == 2 :
-                    loss = re * l1 + 5 * self.args.VAE_ce * l2 + 5 * self.args.VAE_kl * l3 + 5 * self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss + compression_weight * compression_penalty
+                    loss = re * l1 + 5 * self.args.VAE_ce * l2 + 5 * self.args.VAE_kl * l3 + 5 * self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss 
                 if self.local_traindata_property == None:
-                    loss = re * l1 + self.args.VAE_ce * l2 + self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss + compression_weight * compression_penalty
+                    loss = re * l1 + self.args.VAE_ce * l2 + self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss 
             else: 
-                loss = re * l1 + self.args.VAE_ce * l2 + self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss + compression_weight * compression_penalty
+                loss = re * l1 + self.args.VAE_ce * l2 + self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss
             
-            # Fix 1: Debug print to monitor compression penalty effectiveness
-            if self.args.dataset == 'eicu' and batch_idx % 10 == 0:  # Print every 10 batches
-                print(f"Loss: {loss.data.item():.4f}, Compression penalty: {(compression_weight * compression_penalty).data.item():.6f}, RX squared norms: {rx_squared_norms.mean().item():.4f}")
+            # # Fix 1: Debug print to monitor compression penalty effectiveness
+            # if self.args.dataset == 'eicu' and batch_idx % 10 == 0:  # Print every 10 batches
+            #     print(f"Loss: {loss.data.item():.4f}, Compression penalty: {(compression_weight * compression_penalty).data.item():.6f}, RX squared norms: {rx_squared_norms.mean().item():.4f}")
                 
             loss.backward()
             optimizer.step()

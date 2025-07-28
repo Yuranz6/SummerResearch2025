@@ -23,28 +23,6 @@ from model.tabular.models import Medical_MLP_Classifier
 
 from pdb import set_trace as bp
 
-def gumbel_sigmoid(logits, temperature=0.5, hard=False):
-    """
-    Differentiable approximation to discrete binary sampling for medical features
-    
-    Args:
-        logits: Raw decoder outputs [batch, features]
-        temperature: Lower = more discrete (0.1-1.0), higher = more continuous
-        hard: If True, returns exactly 0/1 (non-differentiable)
-    """
-    # Add Gumbel noise for stochastic sampling
-    gumbel_noise = -torch.log(-torch.log(torch.rand_like(logits) + 1e-10) + 1e-10)
-    
-    # Apply temperature scaling - lower temp = more binary-like
-    y = torch.sigmoid((logits + gumbel_noise) / temperature)
-    
-    if hard:
-        # Straight-through estimator: forward pass uses 0/1, backward pass uses continuous
-        y_hard = (y > 0.5).float()
-        y = (y_hard - y).detach() + y
-    
-    return y
-
 def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=True)
 
@@ -437,10 +415,10 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
         # Decode
         hi_projected = self.fc21(hi)
         xi_decoded = self.decode(hi_projected)
-        xi_logits = self.decoder_last(xi_decoded)
-        xi_logits = self.xi_bn(xi_logits)
-        # Use Gumbel-Sigmoid for binary medical data - preserves discrete nature
-        xi = gumbel_sigmoid(xi_logits, temperature=0.3, hard=False)  # Performance-robust features
+        xi = self.decoder_last(xi_decoded)
+        xi = self.xi_bn(xi)
+        xi = torch.tanh(xi) 
+     
         
         if self.with_classifier:
             rx = x_no_normalize - xi  # z(x;θ) = x - q(x;θ)

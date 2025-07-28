@@ -16,6 +16,9 @@ from model.build import create_model
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as transforms
 
+# Import feature similarity test
+from evaluation.simple_feature_similarity import compute_client_feature_similarity
+
 
 
 class BasePSManager(object):
@@ -125,6 +128,10 @@ class BasePSManager(object):
         for client in self.client_list:
             del client.vae_model
         self._get_local_shared_data()
+        
+        # Test feature similarity across hospital clients
+        if self.args.dataset == 'eicu':
+            self._test_feature_similarity()
 
         self.aggregator.save_vae_param()
 
@@ -194,6 +201,28 @@ class BasePSManager(object):
         else:
             update_state_kargs = {}
         return update_state_kargs
+
+    def _test_feature_similarity(self):
+        """
+        Test inter-client feature similarity for performance-sensitive features (rx).
+        This evaluates how well VAE distillation creates consistent medical patterns across hospitals.
+        """
+        logging.info("Testing inter-client feature similarity...")
+        
+        try:
+            # Test similarity for both noise modes
+            for noise_mode in [1, 2]:
+                logging.info(f"\n--- Testing similarity for noise mode {noise_mode} ---")
+                results = compute_client_feature_similarity(self.client_list, noise_mode=noise_mode)
+                
+                if results is not None:
+                    # Save results for later analysis if needed
+                    if not hasattr(self, 'similarity_results'):
+                        self.similarity_results = {}
+                    self.similarity_results[f'noise_mode_{noise_mode}'] = results
+                    
+        except Exception as e:
+            logging.error(f"Feature similarity test failed: {e}")
 
  # ----------------- sample clinet duiring VAE step------------------#
     def client_sample_for_VAE(self, round_idx, client_num_in_total, client_num_per_round):

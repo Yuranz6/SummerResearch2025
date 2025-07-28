@@ -438,7 +438,7 @@ class Client(PSTrainer):
                 shuffle=True,
                 drop_last=True
             )
-        else: # TODO: this part for eicu data will get shape mismatch: x.shape torch.Size([64, 1, 256, 1])
+        else: 
             generate_transform = transforms.Compose([])
             if self.args.dataset == 'fmnist':
                 generate_transform.transforms.append(transforms.Resize(32))

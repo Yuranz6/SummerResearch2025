@@ -3,46 +3,77 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import logging
-from sklearn.metrics import average_precision_score, precision_recall_curve
+import yaml
+import json
+import os
+from sklearn.metrics import average_precision_score, roc_auc_score, accuracy_score, f1_score
 from model.tabular.models import Medical_MLP_Classifier
 from torch.utils.data import TensorDataset, DataLoader
 
 
-def test_cross_hospital_generalization(client_list, global_share_dataset1, global_share_dataset2, global_share_y, args, device):
+def test_cross_hospital_generalization(client_list, global_share_dataset1, global_share_dataset2, global_share_y, 
+                                      global_test_dataloader, args, device, eval_config=None):
     """
-    Test cross-hospital generalization enhancement using shared rx features.
+    Configurable cross-hospital generalization test using shared rx features.
     
     For each hospital as source:
     1. Train baseline classifier (local data only)
     2. Train treatment classifier (local + shared global rx)  
-    3. Test both on all other hospitals
-    4. Measure AUPRC improvement
+    3. Test both on global test dataset (mixed hospitals, unbiased)
+    4. Measure configurable evaluation metric improvement
     
     Args:
         client_list: List of client objects
         global_share_dataset1: Global shared rx features (noise mode 1)
         global_share_dataset2: Global shared rx features (noise mode 2) 
         global_share_y: Global shared labels
+        global_test_dataloader: Global test dataloader (mixed hospitals)
         args: Configuration arguments
         device: Device for computation
+        eval_config: Evaluation configuration dict or path to config file
     """
-    logging.info("Starting cross-hospital generalization test...")
+    logging.info("Starting cross-hospital generalization test on global dataset...")
+    
+    # Load evaluation configuration
+    config = _load_evaluation_config(eval_config)
+    exp_config = config.get('cross_hospital_generalization', {})
+    
+    # Extract configuration parameters with defaults
+    evaluation_metric = exp_config.get('evaluation_metric', 'auprc')
+    classifier_epochs = exp_config.get('classifier_epochs', 50)
+    classifier_lr = exp_config.get('classifier_lr', 0.001)
+    classifier_hidden_dims = exp_config.get('classifier_hidden_dims', [128, 64])
+    classifier_dropout = exp_config.get('classifier_dropout', 0.2)
+    mixed_data_ratio = exp_config.get('mixed_data_ratio', 0.5)
+    noise_modes = exp_config.get('noise_modes', [1, 2])
+    save_results = exp_config.get('save_results', True)
+    results_filename = exp_config.get('results_filename', 'cross_hospital_generalization_results.json')
+    
+    logging.info(f"Config: metric={evaluation_metric}, epochs={classifier_epochs}, "
+                f"mixed_ratio={mixed_data_ratio}, noise_modes={noise_modes}")
     
     num_hospitals = len(client_list)
-    generalization_results = {}
+    all_results = {
+        'config': exp_config,
+        'results_by_noise_mode': {}
+    }
     
-    # Test both noise modes
-    for noise_mode in [1, 2]:
+    # Get global test data once (reuse for all experiments)
+    global_test_data, global_test_labels = _extract_test_data(global_test_dataloader, device)
+    mortality_rate = global_test_labels.float().mean().item()
+    logging.info(f"Global test dataset: {len(global_test_data)} samples, mortality_rate={mortality_rate:.4f}")
+    
+    # Test configured noise modes
+    for noise_mode in noise_modes:
         logging.info(f"\n=== Testing noise mode {noise_mode} ===")
         
-        # Select appropriate global dataset
+        # Select appropriate global shared dataset
         global_share_data = global_share_dataset1 if noise_mode == 1 else global_share_dataset2
         
         mode_results = {
-            'improvement_matrix': np.zeros((num_hospitals, num_hospitals)),
-            'baseline_matrix': np.zeros((num_hospitals, num_hospitals)), 
-            'treatment_matrix': np.zeros((num_hospitals, num_hospitals)),
-            'hospital_pairs': []
+            'noise_mode': noise_mode,
+            'source_results': [],
+            'summary_stats': {}
         }
         
         # For each hospital as source
@@ -55,184 +86,154 @@ def test_cross_hospital_generalization(client_list, global_share_dataset1, globa
                 source_train_data = torch.FloatTensor(source_client.train_ori_data)
                 source_train_labels = torch.LongTensor(source_client.train_ori_targets)
                 
-                # Create balanced mixed training dataset (local + shared)
-                mixed_train_data, mixed_train_labels = _create_balanced_mixed_dataset(
+                # Create mixed training dataset (local + shared)
+                mixed_train_data, mixed_train_labels = _create_mixed_dataset(
                     source_train_data, source_train_labels,
                     global_share_data, global_share_y,
-                    args
+                    mixed_data_ratio
                 )
                 
                 # Train baseline classifier (local only)
                 logging.info(f"Training baseline classifier for hospital {source_idx}...")
                 baseline_classifier = _train_classifier(
                     source_train_data, source_train_labels, 
-                    args, device, 
-                    model_name=f"baseline_h{source_idx}_mode{noise_mode}"
+                    classifier_epochs, classifier_lr, classifier_hidden_dims, classifier_dropout,
+                    device, f"baseline_h{source_idx}_mode{noise_mode}"
                 )
                 
-                # Train treatment classifier (local + shared)
+                # Train treatment classifier (local + shared)  
                 logging.info(f"Training treatment classifier for hospital {source_idx}...")
                 treatment_classifier = _train_classifier(
                     mixed_train_data, mixed_train_labels,
-                    args, device,
-                    model_name=f"treatment_h{source_idx}_mode{noise_mode}"
+                    classifier_epochs, classifier_lr, classifier_hidden_dims, classifier_dropout,
+                    device, f"treatment_h{source_idx}_mode{noise_mode}"
                 )
                 
-                # Test on all other hospitals
-                for target_idx in range(num_hospitals):
-                    if target_idx == source_idx:
-                        continue  # Skip self-testing
-                        
-                    target_client = client_list[target_idx]
-                    
-                    # Get target hospital test data
-                    test_data, test_labels = _extract_test_data(target_client.test_dataloader, device)
-                    
-                    if len(test_data) == 0:
-                        logging.warning(f"No test data for target hospital {target_idx}")
-                        continue
-                    
-                    # Debug: Log test data characteristics
-                    mortality_rate = test_labels.float().mean().item()
-                    logging.info(f"Target H{target_idx}: {len(test_data)} samples, mortality_rate={mortality_rate:.4f}")
-                    
-                    # Additional debug: show dataset details to verify they're different
-                    dataset = target_client.test_dataloader.dataset
-                    logging.info(f"Target H{target_idx} test dataset type: {type(dataset)}")
-                    
-                    if hasattr(dataset, 'dataidxs'):
-                        if dataset.dataidxs is not None:
-                            dataset_indices = dataset.dataidxs
-                            sample_indices = dataset_indices[:5] if len(dataset_indices) > 0 else []
-                            logging.info(f"Target H{target_idx} test: {len(dataset_indices)} indices, sample: {sample_indices}")
-                            
-                            # Check if this is actually hospital-specific data by looking at index ranges
-                            if len(dataset_indices) > 0:
-                                logging.info(f"Target H{target_idx} test index range: [{dataset_indices.min()}, {dataset_indices.max()}]")
-                        else:
-                            logging.warning(f"Target H{target_idx} has dataidxs=None - using global test set instead of hospital-specific!")
-                    else:
-                        logging.warning(f"Target H{target_idx} dataset has no dataidxs attribute!")
-                    
-                    # Evaluate baseline classifier
-                    baseline_auprc = _evaluate_classifier_auprc(baseline_classifier, test_data, test_labels, device)
-                    
-                    # Evaluate treatment classifier  
-                    treatment_auprc = _evaluate_classifier_auprc(treatment_classifier, test_data, test_labels, device)
-                    
-                    # Calculate improvement
-                    improvement = treatment_auprc - baseline_auprc
-                    
-                    # Store results
-                    mode_results['baseline_matrix'][source_idx, target_idx] = baseline_auprc
-                    mode_results['treatment_matrix'][source_idx, target_idx] = treatment_auprc
-                    mode_results['improvement_matrix'][source_idx, target_idx] = improvement
-                    
-                    # Log individual result
-                    logging.info(f"H{source_idx}→H{target_idx}: Baseline={baseline_auprc:.4f}, "
-                               f"Treatment={treatment_auprc:.4f}, Improvement={improvement:+.4f}")
-                    
-                    mode_results['hospital_pairs'].append({
-                        'source': source_idx,
-                        'target': target_idx, 
-                        'baseline_auprc': baseline_auprc,
-                        'treatment_auprc': treatment_auprc,
-                        'improvement': improvement
-                    })
-                    
+                # Test both classifiers on global test dataset
+                baseline_score = _evaluate_with_metric(baseline_classifier, global_test_data, global_test_labels, device, evaluation_metric)
+                treatment_score = _evaluate_with_metric(treatment_classifier, global_test_data, global_test_labels, device, evaluation_metric)
+                
+                # Calculate improvement
+                improvement = treatment_score - baseline_score
+                
+                # Store results
+                result = {
+                    'source_hospital': source_idx,
+                    'baseline_score': baseline_score,
+                    'treatment_score': treatment_score,
+                    'improvement': improvement,
+                    'metric': evaluation_metric
+                }
+                mode_results['source_results'].append(result)
+                
+                # Log individual result
+                logging.info(f"H{source_idx}→Global: Baseline={baseline_score:.4f}, "
+                           f"Treatment={treatment_score:.4f}, Improvement={improvement:+.4f}")
+                           
             except Exception as e:
                 logging.error(f"Error testing source hospital {source_idx}: {e}")
                 continue
         
-        # Calculate aggregated metrics for this noise mode
-        improvement_matrix = mode_results['improvement_matrix']
-        valid_improvements = improvement_matrix[improvement_matrix != 0]
-        
-        if len(valid_improvements) > 0:
-            mode_results['mean_improvement'] = np.mean(valid_improvements) 
-            mode_results['std_improvement'] = np.std(valid_improvements)
-            mode_results['positive_improvements'] = np.sum(valid_improvements > 0)
-            mode_results['total_pairs'] = len(valid_improvements)
-            mode_results['improvement_rate'] = mode_results['positive_improvements'] / mode_results['total_pairs']
+        # Calculate summary statistics
+        if mode_results['source_results']:
+            improvements = [r['improvement'] for r in mode_results['source_results']]
+            mode_results['summary_stats'] = {
+                'mean_improvement': np.mean(improvements),
+                'std_improvement': np.std(improvements),
+                'positive_improvements': sum(1 for imp in improvements if imp > 0),
+                'total_hospitals': len(improvements),
+                'improvement_rate': sum(1 for imp in improvements if imp > 0) / len(improvements)
+            }
             
-            # Log summary for this mode
+            # Log summary
+            stats = mode_results['summary_stats']
             logging.info(f"\n=== Noise mode {noise_mode} Summary ===")
-            logging.info(f"Valid hospital pairs tested: {mode_results['total_pairs']}")
-            logging.info(f"Mean AUPRC improvement: {mode_results['mean_improvement']:.4f} ± {mode_results['std_improvement']:.4f}")
-            logging.info(f"Pairs with positive improvement: {mode_results['positive_improvements']}/{mode_results['total_pairs']} ({mode_results['improvement_rate']:.1%})")
+            logging.info(f"Hospitals tested: {stats['total_hospitals']}")
+            logging.info(f"Mean {evaluation_metric.upper()} improvement: {stats['mean_improvement']:.4f} ± {stats['std_improvement']:.4f}")
+            logging.info(f"Hospitals with positive improvement: {stats['positive_improvements']}/{stats['total_hospitals']} ({stats['improvement_rate']:.1%})")
             
-            if mode_results['mean_improvement'] > 0:
+            if stats['mean_improvement'] > 0:
                 logging.info("✅ Shared rx features IMPROVE cross-hospital generalization")
             else:
                 logging.info("❌ Shared rx features do NOT improve cross-hospital generalization")
-        else:
-            logging.warning(f"No valid results for noise mode {noise_mode}")
-            
-        generalization_results[f'noise_mode_{noise_mode}'] = mode_results
+        
+        all_results['results_by_noise_mode'][f'mode_{noise_mode}'] = mode_results
     
-    return generalization_results
+    # Save results if configured
+    if save_results:
+        results_dir = config.get('evaluation', {}).get('results_dir', './output/evaluation/')
+        save_path = os.path.join(results_dir, results_filename)
+        _save_results(all_results, save_path)
+    
+    return all_results
 
 
-def _create_balanced_mixed_dataset(local_data, local_labels, global_data, global_labels, args):
+def _create_mixed_dataset(local_data, local_labels, global_data, global_labels, mixed_ratio):
     """
-    Create balanced mixed dataset with equal amounts of local and shared data.
+    Create mixed dataset with configurable ratio of shared data.
+    Preserves natural class distribution (better for imbalanced medical data).
     """
     local_size = len(local_data)
     global_size = len(global_data)
     
-    # Sample equal amounts from local and global datasets
-    sample_size = min(local_size, global_size) // 2
-    
-    # Sample from local data
-    local_indices = torch.randperm(local_size)[:sample_size]
-    sampled_local_data = local_data[local_indices]
-    sampled_local_labels = local_labels[local_indices]
-    
-    # Sample from global data proportionally (to maintain class balance)
-    if args.dataset == 'eicu':
-        # For medical data, sample proportionally to maintain class distribution
+    # Calculate sample sizes based on ratio
+    if mixed_ratio == 0.0:
+        # Pure local data
+        return local_data, local_labels
+    elif mixed_ratio == 1.0:
+        # Pure global data (not recommended)
+        sample_size = min(local_size, global_size)
         global_indices = torch.randperm(global_size)[:sample_size]
+        return global_data[global_indices], global_labels[global_indices]
     else:
-        # For other datasets, can use different sampling strategy
-        global_indices = torch.randperm(global_size)[:sample_size]
+        # Mixed data
+        total_samples = local_size
+        global_samples = int(total_samples * mixed_ratio)
+        local_samples = total_samples - global_samples
         
-    sampled_global_data = global_data[global_indices]
-    sampled_global_labels = global_labels[global_indices]
-    
-    # Combine datasets
-    mixed_data = torch.cat([sampled_local_data, sampled_global_data], dim=0)
-    mixed_labels = torch.cat([sampled_local_labels, sampled_global_labels], dim=0)
-    
-    # Shuffle combined dataset
-    shuffle_indices = torch.randperm(len(mixed_data))
-    mixed_data = mixed_data[shuffle_indices]
-    mixed_labels = mixed_labels[shuffle_indices]
-    
-    logging.debug(f"Created mixed dataset: local={len(sampled_local_data)}, "
-                 f"global={len(sampled_global_data)}, total={len(mixed_data)}")
-    
-    return mixed_data, mixed_labels
+        # Sample from local data
+        local_indices = torch.randperm(local_size)[:local_samples]
+        sampled_local_data = local_data[local_indices]
+        sampled_local_labels = local_labels[local_indices]
+        
+        # Sample from global data
+        global_indices = torch.randperm(global_size)[:global_samples]
+        sampled_global_data = global_data[global_indices]
+        sampled_global_labels = global_labels[global_indices]
+        
+        # Combine and shuffle
+        mixed_data = torch.cat([sampled_local_data, sampled_global_data], dim=0)
+        mixed_labels = torch.cat([sampled_local_labels, sampled_global_labels], dim=0)
+        
+        shuffle_indices = torch.randperm(len(mixed_data))
+        mixed_data = mixed_data[shuffle_indices]
+        mixed_labels = mixed_labels[shuffle_indices]
+        
+        logging.debug(f"Created mixed dataset: local={len(sampled_local_data)}, "
+                     f"global={len(sampled_global_data)}, total={len(mixed_data)}")
+        
+        return mixed_data, mixed_labels
 
 
-def _train_classifier(train_data, train_labels, args, device, model_name="classifier", epochs=50):
+def _train_classifier(train_data, train_labels, epochs, lr, hidden_dims, dropout_rate, device, model_name="classifier"):
     """
-    Train a Medical_MLP_Classifier on given training data.
+    Train a Medical_MLP_Classifier with configurable parameters.
     """
     # Create dataset and dataloader
     dataset = TensorDataset(train_data, train_labels)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     
     # Initialize classifier
     input_dim = train_data.shape[1]
     classifier = Medical_MLP_Classifier(
         input_dim=input_dim,
         num_classes=1,  # Binary classification
-        hidden_dims=[128, 64],
-        dropout_rate=0.2
+        hidden_dims=hidden_dims,
+        dropout_rate=dropout_rate
     ).to(device)
     
     # Training setup
-    optimizer = optim.Adam(classifier.parameters(), lr=0.001)
+    optimizer = optim.Adam(classifier.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
     
     # Training loop
@@ -264,6 +265,84 @@ def _train_classifier(train_data, train_labels, args, device, model_name="classi
     return classifier
 
 
+def _evaluate_with_metric(classifier, test_data, test_labels, device, metric="auprc"):
+    """
+    Evaluate classifier with specified metric.
+    """
+    if len(test_data) == 0 or len(test_labels) == 0:
+        return 0.0
+        
+    classifier.eval()
+    
+    with torch.no_grad():
+        test_data = test_data.to(device)
+        logits = classifier(test_data)
+        probabilities = torch.sigmoid(logits).squeeze().cpu().numpy()
+        
+        # Handle single sample case
+        if probabilities.ndim == 0:
+            probabilities = np.array([probabilities])
+            
+        labels = test_labels.numpy()
+        
+        # Check if we have both classes
+        if len(np.unique(labels)) < 2:
+            logging.warning(f"Only one class present in test data - cannot compute {metric}")
+            return 0.0
+            
+        try:
+            if metric == "auprc":
+                return average_precision_score(labels, probabilities)
+            elif metric == "auroc":
+                return roc_auc_score(labels, probabilities)
+            elif metric == "accuracy":
+                predictions = (probabilities > 0.5).astype(int)
+                return accuracy_score(labels, predictions)
+            elif metric == "f1":
+                predictions = (probabilities > 0.5).astype(int)
+                return f1_score(labels, predictions)
+            else:
+                logging.warning(f"Unknown metric {metric}, using AUPRC")
+                return average_precision_score(labels, probabilities)
+        except Exception as e:
+            logging.warning(f"{metric} calculation failed: {e}")
+            return 0.0
+
+
+def _load_evaluation_config(eval_config):
+    """Load evaluation configuration from file or dict"""
+    if eval_config is None:
+        # Default config file path
+        config_path = os.path.join(os.path.dirname(__file__), '..', 'configs', 'evaluation_config.yaml')
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                return yaml.safe_load(f)
+        else:
+            logging.warning("No evaluation config found, using defaults")
+            return {}
+    elif isinstance(eval_config, str):
+        # Config file path provided
+        with open(eval_config, 'r') as f:
+            return yaml.safe_load(f)
+    elif isinstance(eval_config, dict):
+        # Config dict provided directly
+        return eval_config
+    else:
+        logging.warning("Invalid eval_config type, using defaults")
+        return {}
+
+
+def _save_results(results, save_path):
+    """Save results to JSON file"""
+    try:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, 'w') as f:
+            json.dump(results, f, indent=2, default=str)
+        logging.info(f"Results saved to {save_path}")
+    except Exception as e:
+        logging.error(f"Failed to save results to {save_path}: {e}")
+
+
 def _extract_test_data(test_dataloader, device):
     """
     Extract all test data and labels from dataloader.
@@ -282,39 +361,3 @@ def _extract_test_data(test_dataloader, device):
     test_labels = torch.cat(all_labels, dim=0)
     
     return test_data, test_labels
-
-
-def _evaluate_classifier_auprc(classifier, test_data, test_labels, device):
-    """
-    Evaluate classifier and return AUPRC score.
-    """
-    if len(test_data) == 0 or len(test_labels) == 0:
-        return 0.0
-        
-    classifier.eval()
-    
-    with torch.no_grad():
-        test_data = test_data.to(device)
-        logits = classifier(test_data)
-        probabilities = torch.sigmoid(logits).squeeze().cpu().numpy()
-        
-        # Handle single sample case
-        if probabilities.ndim == 0:
-            probabilities = np.array([probabilities])
-            
-        labels = test_labels.numpy()
-        
-        # Check if we have both classes for AUPRC calculation
-        if len(np.unique(labels)) < 2:
-            logging.warning("Only one class present in test data - cannot compute AUPRC")
-            return 0.0
-            
-        try:
-            auprc = average_precision_score(labels, probabilities)
-            # Debug logging
-            logging.debug(f"AUPRC calc: {len(labels)} samples, {labels.sum()} positive, "
-                         f"prob_range=[{probabilities.min():.4f}, {probabilities.max():.4f}], auprc={auprc:.4f}")
-            return auprc
-        except Exception as e:
-            logging.warning(f"AUPRC calculation failed: {e}")
-            return 0.0

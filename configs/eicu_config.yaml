@@ -14,9 +14,9 @@ use_batch_norm: True
 
 # FL configuration
 algorithm: "FedAvg"
-client_num_in_total: 5
-client_num_per_round: 3
-comm_round: 50
+client_num_in_total: 10
+client_num_per_round: 7
+comm_round: 100
 global_epochs_per_round: 1
 partition_method: "hospital"
 partition_alpha: 0.1 # Not used for hospital partition
@@ -24,14 +24,14 @@ partition_alpha: 0.1 # Not used for hospital partition
 # VAE configuration
 VAE: True
 VAE_comm_round: 10
-VAE_client_num_per_round: 5
-VAE_local_epoch: 5
+VAE_client_num_per_round: 10
+VAE_local_epoch: 2
 
 # VAE loss weights
-VAE_re: 3.0
-VAE_ce: 4.0
-VAE_kl: 0.003
-VAE_x_ce: 2.0
+VAE_re: 4.0
+VAE_ce: 2.0
+VAE_kl: 0.005
+VAE_x_ce: 0.5
 
 # VAE architecture
 VAE_d: 128 # Hidden dimension

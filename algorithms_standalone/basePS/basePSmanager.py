@@ -242,8 +242,10 @@ class BasePSManager(object):
                 self.global_share_dataset1,
                 self.global_share_dataset2, 
                 self.global_share_data_y,
+                self.test_data_global_dl,  # Pass global test dataloader
                 self.args,
-                self.device
+                self.device,
+                eval_config=None  # Use default config file
             )
             
             if results:

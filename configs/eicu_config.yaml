@@ -23,13 +23,13 @@ partition_alpha: 0.1 # Not used for hospital partition
 
 # VAE configuration
 VAE: True
-VAE_comm_round: 15
+VAE_comm_round: 10
 VAE_client_num_per_round: 5
 VAE_local_epoch: 5
 
 # VAE loss weights
-VAE_re: 2.0
-VAE_ce: 8.0
+VAE_re: 3.0
+VAE_ce: 4.0
 VAE_kl: 0.003
 VAE_x_ce: 2.0
 

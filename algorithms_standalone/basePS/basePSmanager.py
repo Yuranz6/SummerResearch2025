@@ -16,8 +16,9 @@ from model.build import create_model
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as transforms
 
-# Import feature similarity test
+# Import evaluation tests
 from evaluation.simple_feature_similarity import compute_client_feature_similarity
+from evaluation.cross_hospital_generalization import test_cross_hospital_generalization
 
 
 
@@ -132,6 +133,9 @@ class BasePSManager(object):
         # Test feature similarity across hospital clients
         if self.args.dataset == 'eicu':
             self._test_feature_similarity()
+            
+            # Test cross-hospital generalization enhancement
+            self._test_cross_hospital_generalization()
 
         self.aggregator.save_vae_param()
 
@@ -223,6 +227,37 @@ class BasePSManager(object):
                     
         except Exception as e:
             logging.error(f"Feature similarity test failed: {e}")
+
+    def _test_cross_hospital_generalization(self):
+        """
+        Test cross-hospital generalization enhancement using shared rx features.
+        This evaluates whether shared features improve model performance when 
+        trained on one hospital and tested on others.
+        """
+        logging.info("Testing cross-hospital generalization enhancement...")
+        
+        try:
+            results = test_cross_hospital_generalization(
+                self.client_list,
+                self.global_share_dataset1,
+                self.global_share_dataset2, 
+                self.global_share_data_y,
+                self.args,
+                self.device
+            )
+            
+            if results:
+                # Save results for later analysis if needed
+                if not hasattr(self, 'generalization_results'):
+                    self.generalization_results = {}
+                self.generalization_results = results
+                
+                logging.info("Cross-hospital generalization test completed successfully")
+            else:
+                logging.warning("No generalization test results obtained")
+                
+        except Exception as e:
+            logging.error(f"Cross-hospital generalization test failed: {e}")
 
  # ----------------- sample clinet duiring VAE step------------------#
     def client_sample_for_VAE(self, round_idx, client_num_in_total, client_num_per_round):

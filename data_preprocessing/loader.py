@@ -167,14 +167,22 @@ class Data_Loader(object):
         return train_ds, test_ds
 
     def load_sub_data(self, client_index, train_ds, test_ds):
-        dataidxs = self.client_dataidx_map[client_index]
-        train_data_local_num = len(dataidxs)
+        # Use separate train and test indices for eICU
+        if self.dataset == "eicu":
+            train_dataidxs = self.client_dataidx_map_train[client_index]
+            test_dataidxs = self.client_dataidx_map_test[client_index]
+        else:
+            # For image datasets, use the same indices for both (original behavior)
+            train_dataidxs = self.client_dataidx_map[client_index]
+            test_dataidxs = self.client_dataidx_map[client_index]
+            
+        train_data_local_num = len(train_dataidxs)
 
         MEAN, STD, train_transform, test_transform = self.get_transform(
             self.resize, self.augmentation, "sub_dataset", self.image_resolution)
 
         logging.debug(f"Train_transform is {train_transform} Test_transform is {test_transform}")
-        train_ds_local = self.sub_data_obj(self.datadir, dataidxs=dataidxs, train=True, transform=train_transform,
+        train_ds_local = self.sub_data_obj(self.datadir, dataidxs=train_dataidxs, train=True, transform=train_transform,
                 full_dataset=train_ds)
 
         if self.dataset == "eicu":
@@ -185,8 +193,8 @@ class Data_Loader(object):
             train_ori_data = np.array(train_ds_local.data)
             train_ori_targets = np.array(train_ds_local.targets)
             
-        test_ds_local = self.sub_data_obj(self.datadir, train=False, transform=test_transform,
-                        full_dataset=test_ds)   
+        test_ds_local = self.sub_data_obj(self.datadir, dataidxs=test_dataidxs, train=False, transform=test_transform,
+                        full_dataset=train_ds)   
 
         test_data_local_num = len(test_ds_local)
         return train_ds_local, test_ds_local, train_ori_data, train_ori_targets, train_data_local_num, test_data_local_num
@@ -225,9 +233,12 @@ class Data_Loader(object):
         self.test_data_global_num = len(test_ds)
         
         from .eicu.data_loader import partition_eicu_data_by_hospital
-        self.client_dataidx_map, self.train_cls_local_counts_dict = partition_eicu_data_by_hospital(
+        self.client_dataidx_map_train, self.client_dataidx_map_test, self.train_cls_local_counts_dict = partition_eicu_data_by_hospital(
             train_ds, self.client_number
         )
+        
+        # For compatibility with existing code, keep the original train mapping as client_dataidx_map
+        self.client_dataidx_map = self.client_dataidx_map_train
         
         logging.info("train_cls_local_counts_dict = " + str(self.train_cls_local_counts_dict))
         

@@ -9,17 +9,19 @@ from sklearn.model_selection import train_test_split
 
 from .datasets import eICU_Medical_Dataset, eICU_Medical_Dataset_truncated_WO_reload, data_transforms_eicu
 
-def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospital=10):
+def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospital=10, test_size=0.2):
     """
-    Partition eICU data naturally by hospital IDs
+    Partition eICU data naturally by hospital IDs with train/test split within each hospital
     
     Args:
         dataset: eICU dataset with hospital_ids attribute
         client_num: number of FL clients needed
         min_samples_per_hospital: minimum samples required per hospital
+        test_size: fraction of data to use for testing within each hospital
         
     Returns:
-        dict_users: {client_idx: array of data indices}
+        dict_users_train: {client_idx: array of training data indices}
+        dict_users_test: {client_idx: array of test data indices}
         dict_users_train_cls_counts: {client_idx: {class: count}}
     """
     
@@ -49,7 +51,8 @@ def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospita
             logging.warning(f"Only {len(selected_hospitals)} hospitals available, "
                           f"but {client_num} clients requested. Will duplicate hospitals.")
     
-    dict_users = {}
+    dict_users_train = {}
+    dict_users_test = {}
     dict_users_train_cls_counts = {}
     
     for client_idx in range(client_num):
@@ -59,12 +62,23 @@ def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospita
             # Duplicate hospitals in round-robin fashion
             hospital_id = selected_hospitals[client_idx % len(selected_hospitals)]
             
-        indices = np.array(hospital_to_indices[hospital_id])
-        dict_users[client_idx] = indices
+        hospital_indices = np.array(hospital_to_indices[hospital_id])
+        hospital_targets = dataset.targets[hospital_indices]
         
-        # class distribution
-        targets = dataset.targets[indices]
-        unique_classes, counts = np.unique(targets, return_counts=True)
+        # Split hospital data into train/test with stratification
+        train_indices, test_indices = train_test_split(
+            hospital_indices,
+            test_size=test_size,
+            random_state=42,
+            stratify=hospital_targets
+        )
+        
+        dict_users_train[client_idx] = train_indices
+        dict_users_test[client_idx] = test_indices
+        
+        # Calculate class distribution for training data only
+        train_targets = dataset.targets[train_indices]
+        unique_classes, counts = np.unique(train_targets, return_counts=True)
         
         class_counts = {0: 0, 1: 0}
         for cls, count in zip(unique_classes, counts):
@@ -73,9 +87,10 @@ def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospita
         dict_users_train_cls_counts[client_idx] = class_counts
         
         logging.info(f"Client {client_idx} (Hospital {hospital_id}): "
-                    f"{len(indices)} samples, class distribution: {class_counts}")
+                    f"Train={len(train_indices)}, Test={len(test_indices)}, "
+                    f"Train class distribution: {class_counts}")
     
-    return dict_users, dict_users_train_cls_counts
+    return dict_users_train, dict_users_test, dict_users_train_cls_counts
 
 
 def load_partition_eicu_medical(dataset, data_dir, partition_method, partition_alpha,
@@ -142,7 +157,7 @@ def load_partition_eicu_medical(dataset, data_dir, partition_method, partition_a
         
         train_data_local_num_dict[client_idx] = len(dataidxs)
         
-        train_data_local = eICU_Medical_truncated_WO_reload(
+        train_data_local = eICU_Medical_Dataset_truncated_WO_reload(
             data_dir, dataidxs=dataidxs, train=True,
             transform=None, full_dataset=train_dataset
         )

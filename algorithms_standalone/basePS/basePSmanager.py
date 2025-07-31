@@ -336,14 +336,42 @@ class BasePSManager(object):
 # -----------------test model on server every communication round------------------#
             avg_acc = self.aggregator.test_on_server_for_round(self.args.VAE_comm_round+round)
             self.test_acc_list.append(avg_acc)
-            print(avg_acc)
             if round % 10 == 0:
                 print('Accuracy of Global Federated Model: ', self.test_acc_list)
         
         self.aggregator.save_classifier()
+        self._save_training_results()
+        
 
-
-
+    def _save_training_results(self):
+        import json
+        import os
+        
+        output_dir = '../output/'+('FedFed_medical' if self.args.VAE else 'FedAvg')
+        os.makedirs(output_dir, exist_ok=True)
+        
+        results = {
+            'test_accuracy_per_round': self.test_acc_list,
+            'total_rounds': len(self.test_acc_list),
+            'dataset': self.args.dataset,
+            'algorithm': self.args.algorithm,
+            'client_num': self.args.client_num_in_total,
+            'config': {
+                'VAE_re': getattr(self.args, 'VAE_ce', None),
+                'VAE_ce': getattr(self.args, 'VAE_ce', None),
+                'VAE_kl': getattr(self.args, 'VAE_kl', None),
+                'VAE_comm_round': getattr(self.args, 'VAE_comm_round', None),
+            }
+        }
+        
+        filename = f'training_results_{self.args.dataset}_{self.args.algorithm}_clients{self.args.client_num_in_total}.json'
+        with open(os.path.join(output_dir, filename), 'w') as f:
+            json.dump(results, f, indent=2)
+        
+        logging.info(f'Training completed!!! final accuracy: {self. test_acc_list[-1]}')
+        logging.info(f"Training results saved to {os.path.join(output_dir, filename)}")
+    
+    
     @abstractmethod
     def algorithm_train(self, round_idx, client_indexes, named_params, params_type,
                         global_other_params,

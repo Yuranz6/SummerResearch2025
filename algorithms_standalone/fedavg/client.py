@@ -73,27 +73,23 @@ class FedAVGClient(Client):
         # ========================SCAFFOLD=====================#
 
         # main training logic
-        if self.args.dataset == 'eicu':
-            # Medical data uses construct_mix_dataloader
-            share_data_mode = (round_idx % 2) + 1 if round_idx is not None else 1
-            mixed_dataloader = self.construct_mix_dataloader(share_data_mode=share_data_mode)
+        share_data_mode = (round_idx % 2) + 1 if round_idx is not None else 1
+        
+        # Construct mixed dataloader with shared data for both datasets
+        mixed_dataloader = self.construct_mix_dataloader(
+            share_data1, share_data2, share_y, share_data_mode=share_data_mode
+        )
+        
+        # Train for specified epochs
+        for epoch in range(self.args.global_epochs_per_round):
+            global_epoch = round_idx * self.args.global_epochs_per_round + epoch
             
-            # Train for specified epochs
-            for epoch in range(self.args.global_epochs_per_round):
-                global_epoch = round_idx * self.args.global_epochs_per_round + epoch
-                avg_loss = self.trainer.train_mix_dataloader(
-                    global_epoch, mixed_dataloader, self.device, **train_kwargs
-                )
-        else:
-            # Original image training with separate data sources
-            train_dataloader = self.construct_mix_dataloader()
-            
-            for epoch in range(self.args.global_epochs_per_round):
-                global_epoch = round_idx * self.args.global_epochs_per_round + epoch
+            if self.args.dataset != 'eicu':
                 self.lr_schedule(self.local_num_iterations, self.args.warmup_epochs)
-                self.trainer.train_mix_dataloader(
-                    global_epoch, train_dataloader, self.device, **train_kwargs
-                )
+                
+            avg_loss = self.trainer.train_mix_dataloader(
+                global_epoch, mixed_dataloader, self.device, **train_kwargs
+            )
 
         # ========================SCAFFOLD=====================#
         if self.args.scaffold:

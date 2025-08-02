@@ -180,3 +180,6 @@ _C.medical_task = 'death'  # Options: 'death', 'ventilation', 'sepsis'
 _C.VAE_input_dim = 256
 _C.dropout_rate = 0.2
 _C.use_batch_norm = True
+_C.unseen_hospital_test = False
+_C.target_hospital_id = 199
+

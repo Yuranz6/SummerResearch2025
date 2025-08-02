@@ -57,10 +57,12 @@ class Client(PSTrainer):
         else: 
             self.loss = F.cross_entropy
         
-        # validators1
+        # experiments for validating VAE's performance and quality of shared features
         self.vae_validator = VAEPerformanceValidator(device=self.device)
         self.shared_data_validator = SharedDataDistributionValidator()
         self.mixed_data_validator = MixedDatasetValidator()
+        
+        
     def _construct_train_ori_dataloader(self):
         # ---------------------generate local train dataloader for Fed Step--------------------------#
         train_ori_transform = transforms.Compose([])
@@ -100,9 +102,9 @@ class Client(PSTrainer):
         
         test_acc_avg = AverageMeter()
         test_loss_avg = AverageMeter()
-        
+        # note, for eicu data(extremely imbalanced, 0.54 positive rate), 
+        # we want to measure its AUPRC rather than accuracy
         if self.args.dataset == 'eicu':
-            # For medical data, track predictions for AUPRC
             all_preds = []
             all_targets = []
         
@@ -111,11 +113,9 @@ class Client(PSTrainer):
                 x, y = x.to(self.device), y.to(self.device)
                 batch_size = x.size(0)
                 
-                # Get classifier predictions
                 output = self.vae_model.classifier_test(x)
                 
                 if self.args.dataset == 'eicu':
-                    # Binary classification
                     y_float = y.float()
                     if output.dim() > 1 and output.size(-1) == 1:
                         output = output.squeeze(-1)
@@ -123,11 +123,9 @@ class Client(PSTrainer):
                     loss = F.binary_cross_entropy_with_logits(output, y_float)
                     probs = torch.sigmoid(output)
                     
-                    # Collect for AUPRC
                     all_preds.extend(probs.cpu().numpy())
                     all_targets.extend(y_float.cpu().numpy())
                     
-                    # Calculate accuracy for logging
                     preds = (probs > 0.5).float()
                     correct = (preds == y_float).float().sum()
                     accuracy = correct / batch_size * 100
@@ -140,7 +138,6 @@ class Client(PSTrainer):
                 
                 test_loss_avg.update(loss.data.item(), batch_size)
         
-        # Calculate and log metrics
         if self.args.dataset == 'eicu':
             from sklearn.metrics import average_precision_score
             auprc = average_precision_score(all_targets, all_preds)
@@ -286,21 +283,20 @@ class Client(PSTrainer):
                 # original multi-class entropy
                 cross_entropy = self.loss(out[:batch_size*2], y.repeat(2)) # classification CE loss on noisy performance sensitive features rx_noise
                 x_ce_loss = self.loss(out[batch_size*2:], y) # CE loss on original features x(bn_x)
-            l1 = F.mse_loss(gx, x) # reconstruction loss on generated features (performance-robust)
-            l2 = cross_entropy
+            l1 = F.mse_loss(gx, x) # reconstruction loss on generated features xi (performance-robust)
+            l2 = cross_entropy # CE loss on noisy performance sensitive features rx_noise
             l3 = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-            l3 /= batch_size * self.vae_model.latent_dim # KL - Fixed: use actual latent_dim instead of config VAE_z
+            l3 /= batch_size * self.vae_model.latent_dim # KL 
             
-            # Add sparsity regularization for medical data
+            # sparsity regularization for medical data
             if self.args.dataset == 'eicu':
                 sparsity_loss = torch.mean(torch.abs(gx))  # L1 sparsity penalty on reconstruction
             else:
                 sparsity_loss = 0.0
 
             #  TODO: Add explicit compression constraint from Information Bottleneck
-            # Implement ||rx||₂² ≤ ρ constraint from Equation (9) -  Per-Sample Constraint
+            # Implement ||rx||₂² ≤ ρ constraint from Equation (9) as in FedFed paper
 
-            # Sparsity weight for medical data
             sparsity_weight = 0.2 if self.args.dataset == 'eicu' else 0.0
             
             if self.args.VAE_adaptive:
@@ -313,10 +309,7 @@ class Client(PSTrainer):
             else: 
                 loss = re * l1 + self.args.VAE_ce * l2 + self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss
             
-            # # Fix 1: Debug print to monitor compression penalty effectiveness
-            # if self.args.dataset == 'eicu' and batch_idx % 10 == 0:  # Print every 10 batches
-            #     print(f"Loss: {loss.data.item():.4f}, Compression penalty: {(compression_weight * compression_penalty).data.item():.6f}, RX squared norms: {rx_squared_norms.mean().item():.4f}")
-                
+    
             loss.backward()
             optimizer.step()
 
@@ -347,10 +340,8 @@ class Client(PSTrainer):
 
     def train_vae_model(self, round):
         if self.args.dataset == 'eicu':
-            # Medical-specific VAE training
             self._train_vae_model_medical(round)
         else:
-            # Original image VAE training
             self._train_vae_model_image(round)
             
     def _train_vae_model_image(self,round):
@@ -412,14 +403,14 @@ class Client(PSTrainer):
         )
         
         for epoch in range(self.args.VAE_local_epoch):
-            # eICU medical data is tabular, so skip augmentation steps and go directly to main training
+            # skip augmentation steps and go directly to main training
+            # QUESTION: is it necessary to augment eICU data (similar to mosaic) and pre-train VAE?
             self.train_whole_process(round, epoch, self.vae_optimizer, trainloader)
             
             if epoch % 50 == 0:
                 self.test_local_vae(round, epoch, 'local')
                 
-        # Validate VAE performance after training completion
-        if round == 0 or round % 5 == 0:  # Validate every 5 rounds initially
+        if round == 0 or round % 5 == 0: 
             self.validate_vae_performance(round)
             self.debug_feature_separation(round)
             
@@ -476,11 +467,11 @@ class Client(PSTrainer):
     def get_generate_model_classifer_para(self):
         return deepcopy(self.vae_model.get_classifier().cpu().state_dict())
 
-    # REMOVED: receive_global_share_data - using parameter passing approach instead
 
-
-    def sample_iid_data_from_share_dataset(self,share_data1,share_data2, share_y, share_data_mode = 1):
-        random.seed(random.randint(0,10000))
+    def sample_iid_data_from_share_dataset(self,share_data1, share_data2, share_y, share_data_mode = 1):
+        # balanced sampling: sample equal amount for each class, if have remaining, sample randomly?
+        # QUESTION: should do the same for eICU dataset?
+        # random.seed(random.randint(0,10000))
         if share_data_mode == 1 and share_data1 is None:
             raise RuntimeError("Not get shared data TYPE1")
         if share_data_mode == 2 and share_data2 is None:
@@ -505,7 +496,7 @@ class Client(PSTrainer):
                     epoch_data = torch.cat((epoch_data, share_data2[sample]))
                 epoch_label = torch.cat((epoch_label, share_y[sample]))
 
-        last_sample =  random.sample(range(len(share_y)), last) 
+        last_sample =  random.sample(range(len(share_y)), last) # sample randomly from remaining  
         if share_data_mode == 1:
             epoch_data = torch.cat((epoch_data, share_data1[last_sample]))
         elif share_data_mode == 2:
@@ -519,10 +510,6 @@ class Client(PSTrainer):
         return epoch_data, epoch_label
 
     def construct_mix_dataloader(self, share_data1, share_data2, share_y, share_data_mode=1):
-        """
-        Unified method to construct mixed dataloader with shared data.
-        Routes to appropriate implementation based on dataset type.
-        """
         if self.args.dataset == 'eicu':
             return self._construct_mix_dataloader_medical(share_data1, share_data2, share_y, share_data_mode)
         else:
@@ -564,26 +551,21 @@ class Client(PSTrainer):
 
         from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
         
-        # Local dataset
         local_dataset = TensorDataset(
             torch.FloatTensor(self.train_ori_data),
             torch.LongTensor(self.train_ori_targets)
         )
         
-        # Check if have shared data
         if share_data1 is not None:
-            # Sample from shared data using medical-appropriate proportional sampling
             sampled_data, sampled_y = self._sample_shared_data_proportional(
                 share_data1, share_data2, share_y, share_data_mode
             )
             
-            # shared dataset
             shared_dataset = TensorDataset(sampled_data, sampled_y.long())
             
             # combine
             mixed_dataset = ConcatDataset([local_dataset, shared_dataset])
         else:
-            # during VAE training phase, no shared dataset yet
             mixed_dataset = local_dataset
         
         mixed_dataloader = DataLoader(
@@ -596,24 +578,36 @@ class Client(PSTrainer):
         self.local_train_mixed_dataloader = mixed_dataloader
         return mixed_dataloader 
 
-    def _sample_shared_data_proportional(self, share_data1, share_data2, share_y, share_data_mode, mixed_ratio=0.5):
-        """
-        Medical-appropriate proportional sampling for shared data.
-        Maintains natural class distribution and avoids sampling more than available.
-        """
-        # Select appropriate shared dataset
+    def _sample_shared_data_proportional(self, share_data1, share_data2, share_y, share_data_mode, pos_proportion=0.1):
+        '''Instead of balanced sampling as in original FedFed, we used porportional sampling for both positive and negative samples'''
         share_data = share_data1 if share_data_mode == 1 else share_data2
+        target_total = min(self.local_sample_number, len(share_data))
         
-        # Calculate reasonable sample size (proportion of available shared data)
-        available_samples = len(share_data)
-        desired_samples = min(self.local_sample_number, int(available_samples * mixed_ratio))
+        target_pos = int(target_total * pos_proportion)
+        target_neg = target_total - target_pos
         
-        # Random sampling maintaining natural distribution
-        if desired_samples > 0:
-            indices = torch.randperm(available_samples)[:desired_samples]
-            return share_data[indices], share_y[indices]
+        pos_indices = torch.where(share_y == 1)[0]
+        neg_indices = torch.where(share_y == 0)[0]
+        
+        actual_pos = min(target_pos, len(pos_indices))
+        actual_neg = min(target_neg, len(neg_indices))
+        
+        sampled_indices = []
+        
+        # Sample positive 
+        if actual_pos > 0:
+            selected_pos = pos_indices[torch.randperm(len(pos_indices))[:actual_pos]]
+            sampled_indices.append(selected_pos)
+        
+        # Sample negative
+        if actual_neg > 0:
+            selected_neg = neg_indices[torch.randperm(len(neg_indices))[:actual_neg]]
+            sampled_indices.append(selected_neg)
+        
+        if sampled_indices:
+            all_indices = torch.cat(sampled_indices)
+            return share_data[all_indices], share_y[all_indices]
         else:
-            # Return empty tensors if no samples needed
             return torch.empty(0, share_data.shape[1]), torch.empty(0, dtype=share_y.dtype)
 
     def get_local_share_data(self, noise_mode):  # noise_mode means get RXnoise2 or RXnoise2
@@ -704,8 +698,8 @@ class Client(PSTrainer):
     
     def validate_vae_performance(self, round_idx):
         """
-        Comprehensive VAE validation based on Information Bottleneck principle
-        Should be called after VAE training to assess feature separation quality
+        VAE validation based on Information Bottleneck principle
+        to assess feature separation quality
         """
         if self.args.dataset != 'eicu':
             logging.info("VAE validation currently only supports medical (eicu) dataset")
@@ -715,10 +709,9 @@ class Client(PSTrainer):
         logging.info(f"VAE VALIDATION - Client {self.client_index} - Round {round_idx}")
         logging.info(f"{'='*60}")
         
-        # Create validation dataloader
         val_dataset = torch.utils.data.TensorDataset(
-            torch.FloatTensor(self.train_ori_data[:1000]),  # Use subset for validation
-            torch.LongTensor(self.train_ori_targets[:1000])
+            torch.FloatTensor(self.train_ori_data[:5000]),  
+            torch.LongTensor(self.train_ori_targets[:5000])
         )
         val_dataloader = torch.utils.data.DataLoader(
             val_dataset, batch_size=64, shuffle=False, drop_last=False
@@ -743,7 +736,6 @@ class Client(PSTrainer):
                 local_dataset, batch_size=self.args.batch_size, shuffle=True
             )
             
-            # Validate mixing effects
             mixing_results = self.mixed_data_validator.validate_mixing_effects(
                 self, local_dataloader, mixed_dataloader, self.test_dataloader
             )
@@ -765,8 +757,7 @@ class Client(PSTrainer):
     
     def validate_client_heterogeneity(self, all_clients_data):
         """
-        Analyze heterogeneity across all clients
-        Should be called at server level with all client data
+        No longer used 
         """
         client_indices = list(all_clients_data.keys())
         self.shared_data_validator.analyze_client_heterogeneity(all_clients_data, client_indices)
@@ -785,40 +776,36 @@ class Client(PSTrainer):
         self.vae_model.eval()
         self.vae_model.to(self.device)
         
-        # Take a small sample for debugging
-        sample_data = torch.FloatTensor(self.train_ori_data[:5])  # Just 5 samples
-        sample_targets = torch.LongTensor(self.train_ori_targets[:5])
+        sample_data = torch.FloatTensor(self.train_ori_data[:50])  
+        sample_targets = torch.LongTensor(self.train_ori_targets[:50])
         
         with torch.no_grad():
             sample_data = sample_data.to(self.device)
             
-            # Get VAE outputs
             out, hi, xi, mu, logvar, rx, rx_noise1, rx_noise2 = self.vae_model(sample_data)
             
-            # Move to CPU for printing
             x_original = sample_data.cpu()
-            xi_robust = xi.cpu()  # Performance-robust features (VAE reconstruction)
-            rx_sensitive = rx.cpu()  # Performance-sensitive features (x - xi)
+            xi_robust = xi.cpu()  
+            rx_sensitive = rx.cpu()  
             
             logging.info(f"Sample shape: {x_original.shape}")
             logging.info(f"Input data range: [{x_original.min():.4f}, {x_original.max():.4f}]")
             logging.info(f"Performance-robust (xi) range: [{xi_robust.min():.4f}, {xi_robust.max():.4f}]")
             logging.info(f"Performance-sensitive (rx) range: [{rx_sensitive.min():.4f}, {rx_sensitive.max():.4f}]")
             
-            # Statistical comparison
             x_mean = x_original.mean(dim=0)
             xi_mean = xi_robust.mean(dim=0)
             rx_mean = rx_sensitive.mean(dim=0)
             
-            logging.info(f"Original features mean: {x_mean[:10]}...")  # First 10 features
+            logging.info(f"Original features mean: {x_mean[:10]}...")  
             logging.info(f"Performance-robust mean: {xi_mean[:10]}...")
             logging.info(f"Performance-sensitive mean: {rx_mean[:10]}...")
             
-            # Check if xi is actually reconstructing x well
+            # Check reconstruction quality of xi
             reconstruction_mse = torch.nn.functional.mse_loss(xi_robust, x_original)
             logging.info(f"Reconstruction MSE (xi vs x): {reconstruction_mse.item():.6f}")
             
-            # Check feature norms
+            # feature norms
             x_norm = torch.norm(x_original, dim=1).mean()
             xi_norm = torch.norm(xi_robust, dim=1).mean()
             rx_norm = torch.norm(rx_sensitive, dim=1).mean()
@@ -826,7 +813,7 @@ class Client(PSTrainer):
             logging.info(f"L2 norms - Original: {x_norm:.4f}, xi: {xi_norm:.4f}, rx: {rx_norm:.4f}")
             logging.info(f"Compression ratio ||rx||/||x||: {(rx_norm/x_norm):.4f}")
             
-            # Fix 4: Add squared norm monitoring to align with constraint
+            # squared norm
             x_squared_norm = (torch.norm(x_original, dim=1) ** 2).mean()
             rx_squared_norm = (torch.norm(rx_sensitive, dim=1) ** 2).mean()
             compression_ratio_squared = rx_squared_norm / x_squared_norm
@@ -843,7 +830,7 @@ class Client(PSTrainer):
             logging.info(f"Robust (xi) - Mean: {xi_robust.mean():.4f}, Std: {xi_robust.std():.4f}")
             logging.info(f"Sensitive (rx) - Mean: {rx_sensitive.mean():.4f}, Std: {rx_sensitive.std():.4f}")
             
-            # Correlation analysis
+            # correlation analysis
             x_flat = x_original.flatten()
             xi_flat = xi_robust.flatten()
             rx_flat = rx_sensitive.flatten()
@@ -863,7 +850,7 @@ class Client(PSTrainer):
             sample_0_xi = xi_robust[0]
             sample_0_rx = rx_sensitive[0]
             
-            # Find top features by absolute value
+            # top features
             top_x_indices = torch.argsort(torch.abs(sample_0_x), descending=True)[:5]
             top_xi_indices = torch.argsort(torch.abs(sample_0_xi), descending=True)[:5]
             top_rx_indices = torch.argsort(torch.abs(sample_0_rx), descending=True)[:5]

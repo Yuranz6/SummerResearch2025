@@ -9,15 +9,16 @@ from sklearn.model_selection import train_test_split
 
 from .datasets import eICU_Medical_Dataset, eICU_Medical_Dataset_truncated_WO_reload, data_transforms_eicu
 
-def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospital=10, test_size=0.2):
+def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospital=10, test_size=0.2, 
+                                   unseen_hospital_test=False, target_hospital_id=None):
     """
-    Partition eICU data naturally by hospital IDs with train/test split within each hospital
+    partition eICU data naturally by hospital IDs with train/test split within each hospital
     
     Args:
         dataset: eICU dataset with hospital_ids attribute
         client_num: number of FL clients needed
-        min_samples_per_hospital: minimum samples required per hospital
-        test_size: fraction of data to use for testing within each hospital
+        min_samples_per_hospital: minimum samples required per hospital 
+        test_size
         
     Returns:
         dict_users_train: {client_idx: array of training data indices}
@@ -30,7 +31,7 @@ def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospita
         hospital_id = dataset.hospital_ids[idx]
         hospital_to_indices[hospital_id].append(idx)
     
-    # Filter hospitals 
+    # Filter
     valid_hospitals = []
     for hospital_id, indices in hospital_to_indices.items():
         if len(indices) >= min_samples_per_hospital:
@@ -41,15 +42,28 @@ def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospita
     hospital_sizes = [(h, len(hospital_to_indices[h])) for h in valid_hospitals]
     hospital_sizes.sort(key=lambda x: x[1], reverse=True)
     
-    # Select top hospitals
-    if len(valid_hospitals) > client_num:
-        selected_hospitals = [h for h, _ in hospital_sizes[:client_num]]
-        logging.info(f"Selected top {client_num} hospitals by sample count")
+    # for target hospital test, select client_num + 1 hospitals, then exclude one
+    hospitals_needed = client_num + 1 if unseen_hospital_test and target_hospital_id is not None else client_num
+    
+    if len(valid_hospitals) >= hospitals_needed:
+        selected_hospitals = [h for h, _ in hospital_sizes[:hospitals_needed]]
+        logging.info(f"Selected top {hospitals_needed} hospitals by sample count")
     else:
         selected_hospitals = valid_hospitals
-        if len(selected_hospitals) < client_num:
+        if len(selected_hospitals) < hospitals_needed:
             logging.warning(f"Only {len(selected_hospitals)} hospitals available, "
-                          f"but {client_num} clients requested. Will duplicate hospitals.")
+                          f"but {hospitals_needed} hospitals needed. Will duplicate hospitals.")
+    
+    excluded_hospital_data = None
+    if unseen_hospital_test and target_hospital_id is not None:
+            
+        if target_hospital_id in selected_hospitals:
+            excluded_hospital_data = hospital_to_indices[target_hospital_id]
+            selected_hospitals.remove(target_hospital_id)
+            logging.info(f"Excluded hospital {target_hospital_id} for unseen hospital test ({len(excluded_hospital_data)} samples)")
+        else:
+            logging.warning(f"Target hospital {target_hospital_id} not found in selected hospitals")
+            unseen_hospital_test = False
     
     dict_users_train = {}
     dict_users_test = {}
@@ -59,13 +73,11 @@ def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospita
         if client_idx < len(selected_hospitals):
             hospital_id = selected_hospitals[client_idx]
         else:
-            # Duplicate hospitals in round-robin fashion
-            hospital_id = selected_hospitals[client_idx % len(selected_hospitals)]
+            raise ValueError('Not enough hospitals to select from!')
             
         hospital_indices = np.array(hospital_to_indices[hospital_id])
         hospital_targets = dataset.targets[hospital_indices]
         
-        # Split hospital data into train/test with stratification
         train_indices, test_indices = train_test_split(
             hospital_indices,
             test_size=test_size,
@@ -76,7 +88,6 @@ def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospita
         dict_users_train[client_idx] = train_indices
         dict_users_test[client_idx] = test_indices
         
-        # Calculate class distribution for training data only
         train_targets = dataset.targets[train_indices]
         unique_classes, counts = np.unique(train_targets, return_counts=True)
         
@@ -90,7 +101,7 @@ def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospita
                     f"Train={len(train_indices)}, Test={len(test_indices)}, "
                     f"Train class distribution: {class_counts}")
     
-    return dict_users_train, dict_users_test, dict_users_train_cls_counts
+    return dict_users_train, dict_users_test, dict_users_train_cls_counts, excluded_hospital_data
 
 
 def load_partition_eicu_medical(dataset, data_dir, partition_method, partition_alpha,

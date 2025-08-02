@@ -103,7 +103,6 @@ class Data_Loader(object):
         self.augmentation = augmentation
         self.other_params = other_params
 
-        # For image
         self.resize = resize
 
         self.init_dataset_obj()
@@ -151,7 +150,7 @@ class Data_Loader(object):
             return self.load_image_data()
     
     def load_image_data(self):
-        """Load image datasets (CIFAR, SVHN, FMNIST) - Original implementation"""
+        """Load image datasets (CIFAR, SVHN, FMNIST) """
         MEAN, STD, train_transform, test_transform = self.get_transform(
             self.resize, self.augmentation, "full_dataset", self.image_resolution)
 
@@ -167,7 +166,6 @@ class Data_Loader(object):
         return train_ds, test_ds
 
     def load_sub_data(self, client_index, train_ds, test_ds):
-        # Use separate train and test indices for eICU
         if self.dataset == "eicu":
             train_dataidxs = self.client_dataidx_map_train[client_index]
             test_dataidxs = self.client_dataidx_map_test[client_index]
@@ -231,22 +229,42 @@ class Data_Loader(object):
         
         self.train_data_global_num = y_train_np.shape[0]
         self.test_data_global_num = len(test_ds)
-        
+                
+        unseen_hospital_test = getattr(self.args, 'unseen_hospital_test', False)
+        target_hospital_id = getattr(self.args, 'target_hospital_id', None)
         from .eicu.data_loader import partition_eicu_data_by_hospital
-        self.client_dataidx_map_train, self.client_dataidx_map_test, self.train_cls_local_counts_dict = partition_eicu_data_by_hospital(
-            train_ds, self.client_number
+        self.client_dataidx_map_train, self.client_dataidx_map_test, self.train_cls_local_counts_dict, excluded_hospital_data = partition_eicu_data_by_hospital(
+            train_ds, self.client_number, unseen_hospital_test=unseen_hospital_test, target_hospital_id=target_hospital_id
         )
         
-        # For compatibility with existing code, keep the original train mapping as client_dataidx_map
         self.client_dataidx_map = self.client_dataidx_map_train
         
         logging.info("train_cls_local_counts_dict = " + str(self.train_cls_local_counts_dict))
         
-        # global data loaders
-        self.train_data_global_dl, self.test_data_global_dl = self.get_dataloader(
-            train_ds, test_ds,
-            shuffle=True, drop_last=False, train_sampler=None, num_workers=self.num_workers
-        )
+        # global data loaders 
+        if excluded_hospital_data is not None:
+            MEAN, STD, train_transform, test_transform = self.get_transform(
+                self.resize, self.augmentation, "sub_dataset", self.image_resolution)
+            
+            excluded_hospital_ds = self.sub_data_obj(self.datadir, dataidxs=excluded_hospital_data, 
+                                                   train=True, transform=test_transform, full_dataset=train_ds)
+            
+            # Global train: all remaining hospitals (standard)
+            # Global test: entire excluded hospital (target hospital test)
+            self.train_data_global_dl, _ = self.get_dataloader(
+                train_ds, test_ds,
+                shuffle=True, drop_last=False, train_sampler=None, num_workers=self.num_workers
+            )
+            self.test_data_global_dl, _ = self.get_dataloader(
+                excluded_hospital_ds, excluded_hospital_ds,
+                shuffle=False, drop_last=False, train_sampler=None, num_workers=self.num_workers
+            )
+            logging.info(f"Using entire excluded hospital {target_hospital_id} as global test set ({len(excluded_hospital_data)} samples)")
+        else:
+            self.train_data_global_dl, self.test_data_global_dl = self.get_dataloader(
+                train_ds, test_ds,
+                shuffle=True, drop_last=False, train_sampler=None, num_workers=self.num_workers
+            )
         
         self.train_data_local_num_dict = dict()
         self.test_data_local_num_dict = dict()

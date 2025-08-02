@@ -130,11 +130,9 @@ class BasePSManager(object):
             del client.vae_model
         self._get_local_shared_data()
         
-        # Test feature similarity across hospital clients
+        # Experiments
         if self.args.dataset == 'eicu':
-            self._test_feature_similarity()
-            
-            # Test cross-hospital generalization enhancement
+            self._test_feature_similarity()     
             self._test_cross_hospital_generalization()
 
         self.aggregator.save_vae_param()
@@ -205,22 +203,21 @@ class BasePSManager(object):
         else:
             update_state_kargs = {}
         return update_state_kargs
-
+    
+    # ------------------------------------------- Tests ----------------------------------------------
     def _test_feature_similarity(self):
         """
-        Test inter-client feature similarity for performance-sensitive features (rx).
-        This evaluates how well VAE distillation creates consistent medical patterns across hospitals.
+        test inter-client feature similarity for performance-sensitive features (rx).
+        his evaluates how well VAE distillation creates consistent medical patterns across hospitals? ideally, higher the similarity the better
         """
         logging.info("Testing inter-client feature similarity...")
         
         try:
-            # Test similarity for both noise modes
             for noise_mode in [1, 2]:
                 logging.info(f"\n--- Testing similarity for noise mode {noise_mode} ---")
                 results = compute_client_feature_similarity(self.client_list, noise_mode=noise_mode)
                 
                 if results is not None:
-                    # Save results for later analysis if needed
                     if not hasattr(self, 'similarity_results'):
                         self.similarity_results = {}
                     self.similarity_results[f'noise_mode_{noise_mode}'] = results
@@ -230,11 +227,11 @@ class BasePSManager(object):
 
     def _test_cross_hospital_generalization(self):
         """
-        Test cross-hospital generalization enhancement using shared rx features.
-        This evaluates whether shared features improve model performance when 
-        trained on one hospital and tested on others.
+        Test cross-hospital generalization using shared rx features.
+        evaluates whether shared features improve model performance when 
+        trained on one hospital and tested on the global dataset
         """
-        logging.info("Testing cross-hospital generalization enhancement...")
+        logging.info("Testing cross-hospital generalization ...")
         
         try:
             results = test_cross_hospital_generalization(
@@ -242,14 +239,13 @@ class BasePSManager(object):
                 self.global_share_dataset1,
                 self.global_share_dataset2, 
                 self.global_share_data_y,
-                self.test_data_global_dl,  # Pass global test dataloader
+                self.test_data_global_dl,  
                 self.args,
                 self.device,
-                eval_config=None  # Use default config file
+                eval_config=None  
             )
             
             if results:
-                # Save results for later analysis if needed
                 if not hasattr(self, 'generalization_results'):
                     self.generalization_results = {}
                 self.generalization_results = results

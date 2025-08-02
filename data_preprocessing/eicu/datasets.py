@@ -8,7 +8,7 @@ import os
 
 def data_transforms_eicu(resize=32, augmentation="default", dataset_type="full_dataset", image_resolution=32):
     """
-    For tabular data, return None transforms but maintain the return structure
+    For tabular data, return None transforms 
     """
     MEAN = 0.0  
     STD = 1.0   
@@ -20,10 +20,7 @@ def data_transforms_eicu(resize=32, augmentation="default", dataset_type="full_d
 
 
 class eICU_Medical_Dataset(data.Dataset):
-    """
-    eICU Medical Dataset for medical tabular data
-    """
-    
+   
     def __init__(self, root, train=True, transform=None, target_transform=None, 
                  task='death', download=False):
         self.root = root
@@ -36,7 +33,6 @@ class eICU_Medical_Dataset(data.Dataset):
         self.data, self.targets, self.hospital_ids = self._load_data()
         
     def _load_data(self):
-        """Load the harmonized eICU data"""
         data_path = os.path.join(self.root, 'eicu_harmonized.csv')
         
         if not os.path.exists(data_path):
@@ -83,7 +79,6 @@ class eICU_Medical_Dataset(data.Dataset):
         return data, targets, hospital_ids
     
     def __getitem__(self, index):
-        """Get a single sample"""
         features, target = self.data[index], self.targets[index]
         
         if self.transform is not None:
@@ -99,7 +94,7 @@ class eICU_Medical_Dataset(data.Dataset):
 
 
 class eICU_Medical_Dataset_truncated_WO_reload(data.Dataset):
-    """Truncated medical dataset for federated learning clients"""
+    """Truncated medical dataset(for each client) for federated learning clients"""
     
     def __init__(self, datadir, dataidxs=None, train=True, transform=None,
                  target_transform=None, full_dataset=None):
@@ -112,7 +107,6 @@ class eICU_Medical_Dataset_truncated_WO_reload(data.Dataset):
         if full_dataset is None:
             raise ValueError("full_dataset must be provided for efficient loading")
         
-        # Extract subset based on indices
         if dataidxs is not None:
             self.data = full_dataset.data[dataidxs]
             self.targets = full_dataset.targets[dataidxs]
@@ -125,7 +119,6 @@ class eICU_Medical_Dataset_truncated_WO_reload(data.Dataset):
                 self.hospital_ids = full_dataset.hospital_ids
     
     def __getitem__(self, index):
-        """Get a single sample"""
         features, target = self.data[index], self.targets[index]
         
         if self.transform is not None:

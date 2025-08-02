@@ -16,7 +16,7 @@ use_batch_norm: True
 algorithm: "FedAvg"
 client_num_in_total: 10
 client_num_per_round: 7
-comm_round: 200
+comm_round: 100
 global_epochs_per_round: 1
 partition_method: "hospital"
 partition_alpha: 0.1 # Not used for hospital partition
@@ -65,3 +65,7 @@ level: "INFO"
 gpu_index: 0
 instantiate_all: True
 test: True
+
+
+unseen_hospital_test: true
+target_hospital_id: 199

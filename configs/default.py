@@ -39,6 +39,7 @@ _C.VAE_ce = 2.0
 _C.VAE_kl = 0.005
 _C.VAE_x_ce = 0.5
 _C.VAE_loss = 'focal'
+_C.VAE_target_pos_ratio = 0.5
 
 _C.VAE_std1 = 0.05
 _C.VAE_std2 = 0.1
@@ -183,3 +184,4 @@ _C.use_batch_norm = True
 _C.unseen_hospital_test = False
 _C.target_hospital_id = 199
 
+_C.extract_features = True

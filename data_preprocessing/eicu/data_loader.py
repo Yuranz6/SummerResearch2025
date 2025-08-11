@@ -48,19 +48,31 @@ def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospita
     if len(valid_hospitals) >= hospitals_needed:
         selected_hospitals = [h for h, _ in hospital_sizes[:hospitals_needed]]
         logging.info(f"Selected top {hospitals_needed} hospitals by sample count")
+        logging.info(f"Initial hospital selection: {selected_hospitals}")
     else:
         selected_hospitals = valid_hospitals
         if len(selected_hospitals) < hospitals_needed:
             logging.warning(f"Only {len(selected_hospitals)} hospitals available, "
                           f"but {hospitals_needed} hospitals needed. Will duplicate hospitals.")
-    
     excluded_hospital_data = None
     if unseen_hospital_test and target_hospital_id is not None:
             
         if target_hospital_id in selected_hospitals:
             excluded_hospital_data = hospital_to_indices[target_hospital_id]
-            selected_hospitals.remove(target_hospital_id)
+            target_position = selected_hospitals.index(target_hospital_id)
+            
+            # Replace excluded hospital with next available hospital to maintain client mappings
+            if hospitals_needed < len(hospital_sizes):
+                replacement_hospital = hospital_sizes[hospitals_needed][0]  # Next hospital in ranking
+                selected_hospitals[target_position] = replacement_hospital
+                logging.info(f"Replaced excluded hospital {target_hospital_id} at position {target_position} with hospital {replacement_hospital}")
+            else:
+                selected_hospitals.remove(target_hospital_id)
+                logging.info(f"Removed hospital {target_hospital_id} (no replacement available)")
+            
             logging.info(f"Excluded hospital {target_hospital_id} for unseen hospital test ({len(excluded_hospital_data)} samples)")
+            logging.info(f"Target hospital {target_hospital_id} was at position {target_position} in rankings")
+            logging.info(f"Final hospital selection after replacement: {selected_hospitals}")
         else:
             logging.warning(f"Target hospital {target_hospital_id} not found in selected hospitals")
             unseen_hospital_test = False

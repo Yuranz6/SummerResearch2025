@@ -44,16 +44,10 @@ class BasePSManager(object):
         self.comm_round = self.args.comm_round
 
         # ================================================
-        #    logging all acc
         self.test_acc_list = []
         self._share_data_step()
 
-
-
-
-# got it
     def _setup_datasets(self):
-        # dataset = load_data(self.args, self.args.dataset)
 
         train_data_global_num, test_data_global_num, train_data_global_dl, test_data_global_dl,train_data_local_num_dict, \
         test_data_local_num_dict, test_data_local_dl_dict, train_data_local_ori_dict, train_targets_local_ori_dict, class_num, \
@@ -82,17 +76,13 @@ class BasePSManager(object):
         self.class_num = class_num
 
         if "train_cls_local_counts_dict" in self.other_params:
-            # 字典嵌套字典
             self.train_cls_local_counts_dict = self.other_params["train_cls_local_counts_dict"]  # {client_idx:{label0: labe0_num_client_idx,...,label9: labe9_num_client_idx}}
             # Adding missing classes to list
             classes = list(range(self.class_num)) # [0,1,2,3,4,...,class_num - 1]
             for key in self.train_cls_local_counts_dict:
                 # key means the client index
                 if len(classes) != len(self.train_cls_local_counts_dict[key]):
-                    # print(len(classes))
-                    # print(len(train_data_cls_counts[key]))
                     add_classes = set(classes) - set(self.train_cls_local_counts_dict[key])
-                    # print(add_classes)
                     for e in add_classes:
                         self.train_cls_local_counts_dict[key][e] = 0   
         else:
@@ -105,12 +95,11 @@ class BasePSManager(object):
     def _setup_clients(self):
         pass
 
+# ================================= PHASE 1: VAE training & Data Sharing =================================
     def _share_data_step(self):
         for round in range(self.args.VAE_comm_round):
-
 # -------------------train VAE for every client----------------#
             logging.info("############Round {} VAE #######################".format(round))
-
 # ----------------- sample client duiring VAE step------------------#
             client_indexes = self.client_sample_for_VAE(round, self.args.client_num_in_total, self.args.VAE_client_num_per_round)
             for client_index in client_indexes:
@@ -130,10 +119,9 @@ class BasePSManager(object):
             del client.vae_model
         self._get_local_shared_data()
         
-        # Experiments
-        if self.args.dataset == 'eicu':
-            self._test_feature_similarity()     
-            self._test_cross_hospital_generalization()
+        # Experiments after VAE training done
+        self._test_feature_similarity()     
+        self._test_cross_hospital_generalization()
 
         self.aggregator.save_vae_param()
 
@@ -178,6 +166,7 @@ class BasePSManager(object):
                 self.global_share_dataset2 = torch.cat((self.global_share_dataset2, client_data2))
                 self.global_share_data_y = torch.cat((self.global_share_data_y, data_y))
 
+# ================================= PHASE 1.5: Post VAE Experiments =================================
 
     def test(self):
         logging.info("################test_on_server_for_all_clients : {}".format(
@@ -208,7 +197,7 @@ class BasePSManager(object):
     def _test_feature_similarity(self):
         """
         test inter-client feature similarity for performance-sensitive features (rx).
-        his evaluates how well VAE distillation creates consistent medical patterns across hospitals? ideally, higher the similarity the better
+        evaluates how well VAE distillation creates consistent medical patterns across hospitals? ideally, higher the similarity the better
         """
         logging.info("Testing inter-client feature similarity...")
         
@@ -227,9 +216,9 @@ class BasePSManager(object):
 
     def _test_cross_hospital_generalization(self):
         """
-        Test cross-hospital generalization using shared rx features.
+        test cross-hospital generalization using shared rx features.
         evaluates whether shared features improve model performance when 
-        trained on one hospital and tested on the global dataset
+        trained on one hospital and tested on the global/target dataset
         """
         logging.info("Testing cross-hospital generalization ...")
         
@@ -286,6 +275,7 @@ class BasePSManager(object):
                     self.aggregator.trainer.lr_schedule(epochs)
 
 
+# ================================= PHASE 2: Federated Training =================================
     # ==============train clients and add results to aggregator ===s================================
     def train(self):
 
@@ -332,14 +322,15 @@ class BasePSManager(object):
 # -----------------test model on server every communication round------------------#
             avg_acc = self.aggregator.test_on_server_for_round(self.args.VAE_comm_round+round)
             self.test_acc_list.append(avg_acc)
-            if round % 10 == 0:
-                print('Accuracy of Global Federated Model: ', self.test_acc_list)
+           
         
         self.aggregator.save_classifier()
         self._save_training_results()
         
 
+    
     def _save_training_results(self):
+        ''' save results for plotting'''
         import json
         import os
         

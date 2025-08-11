@@ -98,7 +98,7 @@ def test_cross_hospital_generalization(client_list, global_share_dataset1, globa
                 baseline_classifier = _train_classifier(
                     source_train_data, source_train_labels, 
                     classifier_epochs, classifier_lr, classifier_hidden_dims, classifier_dropout,
-                    device, f"baseline_h{source_idx}_mode{noise_mode}"
+                    device, f"baseline_h{source_idx}_mode{noise_mode}", seed=args.seed
                 )
                 
                 # Train treatment classifier (local + shared)  
@@ -106,7 +106,7 @@ def test_cross_hospital_generalization(client_list, global_share_dataset1, globa
                 treatment_classifier = _train_classifier(
                     mixed_train_data, mixed_train_labels,
                     classifier_epochs, classifier_lr, classifier_hidden_dims, classifier_dropout,
-                    device, f"treatment_h{source_idx}_mode{noise_mode}"
+                    device, f"treatment_h{source_idx}_mode{noise_mode}", seed=args.seed
                 )
                 
                 # Test both classifiers on global test dataset
@@ -215,13 +215,25 @@ def _create_mixed_dataset(local_data, local_labels, global_data, global_labels, 
         return mixed_data, mixed_labels
 
 
-def _train_classifier(train_data, train_labels, epochs, lr, hidden_dims, dropout_rate, device, model_name="classifier"):
+def _train_classifier(train_data, train_labels, epochs, lr, hidden_dims, dropout_rate, device, model_name="classifier", seed=42):
     """
     Train a Medical_MLP_Classifier with configurable parameters.
     """
+    # Set consistent seeds for reproducible training
+    import torch
+    import numpy as np
+    import random
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    
     # Create dataset and dataloader
     dataset = TensorDataset(train_data, train_labels)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    generator = torch.Generator().manual_seed(seed)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, generator=generator)
     
     # Initialize classifier
     input_dim = train_data.shape[1]

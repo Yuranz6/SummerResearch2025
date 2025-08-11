@@ -307,4 +307,50 @@ class Dataset_3Types_ImageData(data.Dataset):
             raise RuntimeError("shared data {} is not equal to ori_data {}".format(len(self.share_data1), len(self.ori_data)))
 
 
+class Dataset_3Types_MedicalData(data.Dataset):
+    """
+    Dataset for FedFed medical tabular data with 3-types simultaneous training.
+    Returns original features, noisy rx features (type 1), and noisy rx features (type 2)
+    along with their corresponding targets for simultaneous training.
+    """
+
+    def __init__(self, ori_data, share_data1, share_data2, ori_targets, share_targets1, share_targets2):
+        """
+        Args:
+            ori_data: Original local tabular data (tensor)
+            share_data1: Shared rx features with noise type 1 (tensor) 
+            share_data2: Shared rx features with noise type 2 (tensor)
+            ori_targets: Original targets (tensor)
+            share_targets1: Targets for shared data type 1 (tensor)
+            share_targets2: Targets for shared data type 2 (tensor)
+        """
+        self.ori_data = ori_data
+        self.share_data1 = share_data1
+        self.share_data2 = share_data2
+        self.ori_targets = ori_targets
+        self.share_targets1 = share_targets1
+        self.share_targets2 = share_targets2
+
+    def __getitem__(self, index):
+        """
+        Returns:
+            tuple: (original_features, rx_noise1, rx_noise2, target1, target2, target3)
+                   for simultaneous training on all 3 types
+        """
+        ori_features = self.ori_data[index]
+        share_features1 = self.share_data1[index] 
+        share_features2 = self.share_data2[index]
+        target1 = self.ori_targets[index]
+        target2 = self.share_targets1[index] 
+        target3 = self.share_targets2[index]
+
+        return ori_features, share_features1, share_features2, target1, target2, target3
+
+    def __len__(self):
+        if len(self.ori_data) == len(self.share_data1) == len(self.share_data2):
+            return len(self.ori_data)
+        else:
+            raise RuntimeError(f"Data length mismatch - ori: {len(self.ori_data)}, "
+                             f"share1: {len(self.share_data1)}, share2: {len(self.share_data2)}")
+
 

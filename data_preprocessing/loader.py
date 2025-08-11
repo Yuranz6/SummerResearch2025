@@ -169,6 +169,7 @@ class Data_Loader(object):
         if self.dataset == "eicu":
             train_dataidxs = self.client_dataidx_map_train[client_index]
             test_dataidxs = self.client_dataidx_map_test[client_index]
+            
         else:
             # For image datasets, use the same indices for both (original behavior)
             train_dataidxs = self.client_dataidx_map[client_index]
@@ -249,16 +250,26 @@ class Data_Loader(object):
             excluded_hospital_ds = self.sub_data_obj(self.datadir, dataidxs=excluded_hospital_data, 
                                                    train=True, transform=test_transform, full_dataset=train_ds)
             
-            # Global train: all remaining hospitals (standard)
+            # Create training dataset excluding the target hospital
+            # Combine indices from all participating clients (excluding target hospital)
+            remaining_hospital_indices = []
+            for client_idx in range(self.client_number):
+                remaining_hospital_indices.extend(self.client_dataidx_map_train[client_idx])
+            
+            remaining_hospital_ds = self.sub_data_obj(self.datadir, dataidxs=remaining_hospital_indices,
+                                                    train=True, transform=train_transform, full_dataset=train_ds)
+            
+            # Global train: only remaining hospitals (excluding target)
             # Global test: entire excluded hospital (target hospital test)
             self.train_data_global_dl, _ = self.get_dataloader(
-                train_ds, test_ds,
+                remaining_hospital_ds, excluded_hospital_ds,
                 shuffle=True, drop_last=False, train_sampler=None, num_workers=self.num_workers
             )
             self.test_data_global_dl, _ = self.get_dataloader(
                 excluded_hospital_ds, excluded_hospital_ds,
                 shuffle=False, drop_last=False, train_sampler=None, num_workers=self.num_workers
             )
+            logging.info(f"Global training uses {len(remaining_hospital_indices)} samples from {self.client_number} participating hospitals")
             logging.info(f"Using entire excluded hospital {target_hospital_id} as global test set ({len(excluded_hospital_data)} samples)")
         else:
             self.train_data_global_dl, self.test_data_global_dl = self.get_dataloader(

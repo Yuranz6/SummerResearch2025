@@ -16,12 +16,13 @@ from model.FL_VAE import *
 from optim.AdamW import AdamW
 from utils.tool import *
 from utils.set import *
-from data_preprocessing.cifar10.datasets import Dataset_Personalize, Dataset_3Types_ImageData
+from data_preprocessing.cifar10.datasets import Dataset_Personalize, Dataset_3Types_ImageData, Dataset_3Types_MedicalData
 import torchvision.transforms as transforms
 from utils.log_info import log_info
 from utils.randaugment4fixmatch import RandAugmentMC, Cutout, RandAugment_no_CutOut 
 from loss_fn.build import FocalLoss
 from utils.validation import VAEPerformanceValidator, SharedDataDistributionValidator, MixedDatasetValidator
+from utils.feature_extraction import FeatureExtractor
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), "../../../")))
 
@@ -48,6 +49,7 @@ class Client(PSTrainer):
             {'params': self.vae_model.parameters()}
         ], lr=1.e-3, betas=(0.9, 0.999), weight_decay=1.e-6)
         self._construct_train_ori_dataloader()
+        
         if self.args.VAE_adaptive:
             self._set_local_traindata_property()
             logging.info(self.local_traindata_property)
@@ -56,6 +58,13 @@ class Client(PSTrainer):
             self.loss = FocalLoss(alpha=0.25, gamma=2.0)
         else: 
             self.loss = F.cross_entropy
+
+# -------------------------Feature extraction setup------------------------#
+        self.feature_extractor = FeatureExtractor(output_dir=f"feature_analysis_client_{self.client_index}")
+        # Store hospital ID if available (for visualization)
+        self.hospital_id = getattr(args, 'hospital_id', None)
+        
+        
         
         # experiments for validating VAE's performance and quality of shared features
         self.vae_validator = VAEPerformanceValidator(device=self.device)
@@ -64,22 +73,8 @@ class Client(PSTrainer):
         
         
     def _construct_train_ori_dataloader(self):
-        # ---------------------generate local train dataloader for Fed Step--------------------------#
-        train_ori_transform = transforms.Compose([])
-        if self.args.dataset == 'fmnist':
-            train_ori_transform.transforms.append(transforms.Resize(32))
-        train_ori_transform.transforms.append(transforms.RandomCrop(32, padding=4))
-        train_ori_transform.transforms.append(transforms.RandomHorizontalFlip())
-        if self.args.dataset not in ['fmnist']:
-            train_ori_transform.transforms.append(RandAugmentMC(n=2, m=10))
-        train_ori_transform.transforms.append(transforms.ToTensor())
-        
-        train_ori_dataset = Dataset_Personalize(self.train_ori_data, self.train_ori_targets,
-                                                transform=train_ori_transform)
-        self.local_train_dataloader = torch.utils.data.DataLoader(dataset=train_ori_dataset,
-                                                                  batch_size=32, shuffle=True,
-                                                                  drop_last=False)
-
+        pass
+    
     def _attack(self,size, mean, std):  #
         rand = torch.normal(mean=mean, std=std, size=size).to(self.device)
         return rand
@@ -95,147 +90,141 @@ class Client(PSTrainer):
         else:
             self.local_traindata_property = None
 
-    def test_local_vae(self, round, epoch, mode):
+# ================================= Phase 1: VAE Train =================================
 
-        self.vae_model.to(self.device)
-        self.vae_model.eval()
+    # we don't do augmented training for medical data
+    # def aug_classifier_train(self, round, epoch, optimizer, aug_trainloader):
+    #     self.vae_model.train()
+    #     self.vae_model.training = True
+
+    #     for batch_idx, (x, y) in enumerate(aug_trainloader):
+    #         x, y, y_b, lam, mixup_index = mixup_data(x, y, alpha=self.args.VAE_alpha)
+    #         x, y, y_b = x.to(self.device), y.to(self.device).view(-1, ), y_b.to(self.device).view(-1, )
+    #         # x, y = Variable(x), [Variable(y), Variable(y_b)]
+    #         x, y = x, [y, y_b]
+    #         n_iter = round * self.args.VAE_local_epoch + epoch * len(aug_trainloader) + batch_idx
+    #         optimizer.zero_grad()
+
+    #         for name, parameter in self.vae_model.named_parameters():
+    #             if 'classifier' not in name:
+    #                 parameter.requires_grad = False
+    #         out = self.vae_model.get_classifier()(x)
+
+    #         loss = lam * F.cross_entropy(out, y[0]) + (1. - lam) * F.cross_entropy(out, y[1])
+    #         loss.backward()
+    #         optimizer.step()
+
+
+
+    # def mosaic(self, batch_data):
+    #     s = 16
+    #     yc, xc = 16, 16
+    #     if self.args.dataset =='fmnist':
+    #         c, w, h = 1, 32, 32
+    #     else:
+    #         c, w, h = 3, 32, 32
+    #     aug_data = torch.zeros((self.args.VAE_aug_batch_size, c, w, h))
+    #     CutOut = Cutout(n_holes=1, length=16)
+    #     for k in range(self.args.VAE_aug_batch_size):
+
+    #         sample = random.sample(range(batch_data.shape[0]), 4)
+    #         img4 = torch.zeros(batch_data[0].shape)
+
+    #         left = random.randint(0, 16)
+    #         up = random.randint(0, 16)
+
+    #         for i, index in enumerate(sample):
+    #             if i == 0:  # top left
+    #                 x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
+    #             elif i == 1:  # top right
+    #                 x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
+    #             elif i == 2:  # bottom left
+    #                 x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
+    #             elif i == 3:  # bottom right
+    #                 x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
+    #             img4[:, x1a:x2a, y1a:y2a] = batch_data[index][:, left:left + 16, up:up + 16]
+    #         img4 = CutOut(img4)
+    #         aug_data[k] = img4
+    #     return aug_data
+
+    # def aug_VAE_train(self, round, epoch, optimizer, aug_trainloader):
+    #     self.vae_model.train()
+    #     self.vae_model.training = True
+    #     self.vae_model.requires_grad_(True)
+
+    #     for batch_idx, (x, y) in enumerate(aug_trainloader):
+    #         n_iter = round * self.args.VAE_local_epoch + epoch  * len(aug_trainloader) + batch_idx
+    #         batch_size = x.size(0)
+    #         if batch_size < 4:
+    #             break
+    #         # using mosaic data train VAE first for get a good initialize
+    #         aug_data = self.mosaic(x).to(self.device)
+    #         optimizer.zero_grad()
+
+    #         if self.args.VAE_curriculum:
+    #             if epoch < 100:
+    #                 re = 10 * self.args.VAE_re
+    #             elif epoch < 200:
+    #                 re = 5 * self.args.VAE_re
+    #             else:
+    #                 re = self.args.VAE_re
+    #         else:
+    #             re = self.args.VAE_re
+
+    #         _, _, aug_gx, aug_mu, aug_logvar, _, _, _ = self.vae_model(aug_data)
+    #         aug_l1 = F.mse_loss(aug_gx, aug_data)
+    #         aug_l3 = -0.5 * torch.sum(1 + aug_logvar - aug_mu.pow(2) - aug_logvar.exp())
+    #         aug_l3 /= self.args.VAE_aug_batch_size * 3 * self.args.VAE_z
+
+
+    #         aug_loss = re * aug_l1 + self.args.VAE_kl * aug_l3
+
+    #         aug_loss.backward()
+    #         optimizer.step()
+    
+    def _create_balanced_vae_dataset(self):
+        """
+        Create a balanced dataset for VAE training by:
+        1. Using all available positive samples
+        2. Downsampling negative samples to achieve target ratio
         
-        test_acc_avg = AverageMeter()
-        test_loss_avg = AverageMeter()
-        # note, for eicu data(extremely imbalanced, 0.54 positive rate), 
-        # we want to measure its AUPRC rather than accuracy
-        if self.args.dataset == 'eicu':
-            all_preds = []
-            all_targets = []
+        Returns:
+            balanced_data: numpy array of balanced features
+            balanced_targets: numpy array of balanced labels
+        """
+        data = self.train_ori_data
+        targets = self.train_ori_targets
+        target_pos_ratio = self.args.VAE_target_pos_ratio
         
-        with torch.no_grad():
-            for batch_idx, (x, y) in enumerate(self.test_dataloader):
-                x, y = x.to(self.device), y.to(self.device)
-                batch_size = x.size(0)
-                
-                output = self.vae_model.classifier_test(x)
-                
-                if self.args.dataset == 'eicu':
-                    y_float = y.float()
-                    if output.dim() > 1 and output.size(-1) == 1:
-                        output = output.squeeze(-1)
-                    
-                    loss = F.binary_cross_entropy_with_logits(output, y_float)
-                    probs = torch.sigmoid(output)
-                    
-                    all_preds.extend(probs.cpu().numpy())
-                    all_targets.extend(y_float.cpu().numpy())
-                    
-                    preds = (probs > 0.5).float()
-                    correct = (preds == y_float).float().sum()
-                    accuracy = correct / batch_size * 100
-                    test_acc_avg.update(accuracy.item(), batch_size)
-                else:
-                    # Original multi-class
-                    loss = F.cross_entropy(output, y)
-                    prec1, _ = accuracy(output.data, y)
-                    test_acc_avg.update(prec1.item(), batch_size)
-                
-                test_loss_avg.update(loss.data.item(), batch_size)
+        pos_indices = np.where(targets == 1)[0]
+        neg_indices = np.where(targets == 0)[0]
         
-        if self.args.dataset == 'eicu':
-            from sklearn.metrics import average_precision_score
-            auprc = average_precision_score(all_targets, all_preds)
-            logging.info("| VAE Testing Round %d Epoch %d | Test Loss: %.4f | Test Acc: %.4f | AUPRC: %.4f" %
-                        (round, epoch, test_loss_avg.avg, test_acc_avg.avg, auprc))
+        n_pos = len(pos_indices)
+        n_neg_available = len(neg_indices)
+        
+        
+        n_neg_needed = int(n_pos * (1 - target_pos_ratio) / target_pos_ratio)
+        
+        if n_neg_needed <= n_neg_available:
+            selected_neg_indices = np.random.choice(neg_indices, size=n_neg_needed, replace=False)
         else:
-            logging.info("| VAE Testing Round %d Epoch %d | Test Loss: %.4f | Test Acc: %.4f" %
-                        (round, epoch, test_loss_avg.avg, test_acc_avg.avg))
-
-    def aug_classifier_train(self, round, epoch, optimizer, aug_trainloader):
-        self.vae_model.train()
-        self.vae_model.training = True
-
-        for batch_idx, (x, y) in enumerate(aug_trainloader):
-            x, y, y_b, lam, mixup_index = mixup_data(x, y, alpha=self.args.VAE_alpha)
-            x, y, y_b = x.to(self.device), y.to(self.device).view(-1, ), y_b.to(self.device).view(-1, )
-            # x, y = Variable(x), [Variable(y), Variable(y_b)]
-            x, y = x, [y, y_b]
-            n_iter = round * self.args.VAE_local_epoch + epoch * len(aug_trainloader) + batch_idx
-            optimizer.zero_grad()
-
-            for name, parameter in self.vae_model.named_parameters():
-                if 'classifier' not in name:
-                    parameter.requires_grad = False
-            out = self.vae_model.get_classifier()(x)
-
-            loss = lam * F.cross_entropy(out, y[0]) + (1. - lam) * F.cross_entropy(out, y[1])
-            loss.backward()
-            optimizer.step()
-
-
-
-    def mosaic(self, batch_data):
-        s = 16
-        yc, xc = 16, 16
-        if self.args.dataset =='fmnist':
-            c, w, h = 1, 32, 32
-        else:
-            c, w, h = 3, 32, 32
-        aug_data = torch.zeros((self.args.VAE_aug_batch_size, c, w, h))
-        CutOut = Cutout(n_holes=1, length=16)
-        for k in range(self.args.VAE_aug_batch_size):
-
-            sample = random.sample(range(batch_data.shape[0]), 4)
-            img4 = torch.zeros(batch_data[0].shape)
-
-            left = random.randint(0, 16)
-            up = random.randint(0, 16)
-
-            for i, index in enumerate(sample):
-                if i == 0:  # top left
-                    x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
-                elif i == 1:  # top right
-                    x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
-                elif i == 2:  # bottom left
-                    x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
-                elif i == 3:  # bottom right
-                    x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
-                img4[:, x1a:x2a, y1a:y2a] = batch_data[index][:, left:left + 16, up:up + 16]
-            img4 = CutOut(img4)
-            aug_data[k] = img4
-        return aug_data
-
-    def aug_VAE_train(self, round, epoch, optimizer, aug_trainloader):
-        self.vae_model.train()
-        self.vae_model.training = True
-        self.vae_model.requires_grad_(True)
-
-        for batch_idx, (x, y) in enumerate(aug_trainloader):
-            n_iter = round * self.args.VAE_local_epoch + epoch  * len(aug_trainloader) + batch_idx
-            batch_size = x.size(0)
-            if batch_size < 4:
-                break
-            # using mosaic data train VAE first for get a good initialize
-            aug_data = self.mosaic(x).to(self.device)
-            optimizer.zero_grad()
-
-            if self.args.VAE_curriculum:
-                if epoch < 100:
-                    re = 10 * self.args.VAE_re
-                elif epoch < 200:
-                    re = 5 * self.args.VAE_re
-                else:
-                    re = self.args.VAE_re
-            else:
-                re = self.args.VAE_re
-
-            _, _, aug_gx, aug_mu, aug_logvar, _, _, _ = self.vae_model(aug_data)
-            aug_l1 = F.mse_loss(aug_gx, aug_data)
-            aug_l3 = -0.5 * torch.sum(1 + aug_logvar - aug_mu.pow(2) - aug_logvar.exp())
-            aug_l3 /= self.args.VAE_aug_batch_size * 3 * self.args.VAE_z
-
-
-            aug_loss = re * aug_l1 + self.args.VAE_kl * aug_l3
-
-            aug_loss.backward()
-            optimizer.step()
-
+            selected_neg_indices = neg_indices  
+            logging.warning(f"VAE balanced training: Need {n_neg_needed} neg samples but only have {n_neg_available}, using all available")
+        
+        balanced_indices = np.concatenate([pos_indices, selected_neg_indices])
+        np.random.shuffle(balanced_indices)
+        
+        balanced_data = data[balanced_indices]
+        balanced_targets = targets[balanced_indices]
+        
+        original_pos_ratio = n_pos / (n_pos + n_neg_available)
+        final_pos_ratio = n_pos / len(balanced_indices)
+        
+        logging.info(f"VAE balanced training - Original: {n_pos} pos, {n_neg_available} neg ({original_pos_ratio:.3f} pos ratio)")
+        logging.info(f"VAE balanced training - Balanced: {n_pos} pos, {len(selected_neg_indices)} neg ({final_pos_ratio:.3f} pos ratio)")
+        
+        return balanced_data, balanced_targets
+    
 
     def train_whole_process(self, round, epoch, optimizer, trainloader):
         self.vae_model.train()
@@ -257,47 +246,40 @@ class Client(PSTrainer):
 
             batch_size = x.size(0)
 
-            if self.args.VAE_curriculum and self.args.dataset != 'eicu':
-                if epoch < 10:
-                    re = 10 * self.args.VAE_re
-                elif epoch < 20:
-                    re = 5 * self.args.VAE_re
-                else:
-                    re = self.args.VAE_re
+
+            # CAUTION! do we need to adjust reconstruction strength based on # epoch for medical data? (maybe not?)
+            if epoch < 10:
+                re = 5 * self.args.VAE_re
+            elif epoch < 20:
+                re = 2 * self.args.VAE_re
             else:
                 re = self.args.VAE_re
+            
 
             optimizer.zero_grad()
             out, hi, gx, mu, logvar, rx, rx_noise1, rx_noise2 = self.vae_model(x)
-            if self.args.dataset == 'eicu':
-                y = y.float()
-                if out.dim() > 1 and out.size(-1) == 1:
-                    out_binary = out.squeeze(-1)
-                else:
-                    out_binary = out
-                
-                # focal loss for imbalanced data
-                cross_entropy = self.loss(out_binary[:batch_size*2], y.repeat(2))
-                x_ce_loss = self.loss(out_binary[batch_size*2:], y)
+            y = y.float()
+            if out.dim() > 1 and out.size(-1) == 1:
+                out_binary = out.squeeze(-1)
             else:
-                # original multi-class entropy
-                cross_entropy = self.loss(out[:batch_size*2], y.repeat(2)) # classification CE loss on noisy performance sensitive features rx_noise
-                x_ce_loss = self.loss(out[batch_size*2:], y) # CE loss on original features x(bn_x)
-            l1 = F.mse_loss(gx, x) # reconstruction loss on generated features xi (performance-robust)
+                out_binary = out
+            
+            # focal loss for imbalanced data
+            cross_entropy = self.loss(out_binary[:batch_size*2], y.repeat(2)) # classification CE loss on noisy performance sensitive features rx_noise
+            x_ce_loss = self.loss(out_binary[batch_size*2:], y) # CE loss on original features x(bn_x)
+            l1 = F.mse_loss(gx, x) # reconstruction loss on generated features (performance-robust)
             l2 = cross_entropy # CE loss on noisy performance sensitive features rx_noise
             l3 = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
             l3 /= batch_size * self.vae_model.latent_dim # KL 
             
-            # sparsity regularization for medical data
-            if self.args.dataset == 'eicu':
-                sparsity_loss = torch.mean(torch.abs(gx))  # L1 sparsity penalty on reconstruction
-            else:
-                sparsity_loss = 0.0
+            # sparsity regularization 
+            sparsity_loss = torch.mean(torch.abs(gx))  # L1 sparsity penalty on reconstruction
+            sparsity_weight = 0.2
+
 
             #  TODO: Add explicit compression constraint from Information Bottleneck
             # Implement ||rx||₂² ≤ ρ constraint from Equation (9) as in FedFed paper
 
-            sparsity_weight = 0.2 if self.args.dataset == 'eicu' else 0.0
             
             if self.args.VAE_adaptive:
                 if self.local_traindata_property == 1 :
@@ -324,9 +306,7 @@ class Client(PSTrainer):
             log_info('scalar', 'client {index}:loss'.format(index=self.client_index),
                      loss_avg.avg,step=n_iter,record_tool=self.args.record_tool, 
                         wandb_record=self.args.wandb_record)
-            log_info('scalar',  'client {index}:acc'.format(index=self.client_index),
-                     top1.avg,step=n_iter,record_tool=self.args.record_tool, 
-                        wandb_record=self.args.wandb_record)
+
 
             if epoch % 10 == 0:
                 if (batch_idx + 1) % 30 == 0:
@@ -339,61 +319,30 @@ class Client(PSTrainer):
 
 
     def train_vae_model(self, round):
-        if self.args.dataset == 'eicu':
-            self._train_vae_model_medical(round)
-        else:
-            self._train_vae_model_image(round)
-            
-    def _train_vae_model_image(self,round):
-        train_transform = transforms.Compose([])
-        aug_vae_transform_train = transforms.Compose([])
-        if self.args.dataset == 'fmnist':
-            train_transform.transforms.append(transforms.Resize(32))
-            aug_vae_transform_train.transforms.append(transforms.Resize(32))
-        train_transform.transforms.append(transforms.RandomCrop(32, padding=4))
-        train_transform.transforms.append(transforms.RandomHorizontalFlip())
-        if self.args.dataset not in ['fmnist']:
-            train_transform.transforms.append(RandAugmentMC(n=3, m=10))
-        train_transform.transforms.append(transforms.ToTensor())
-
-        aug_vae_transform_train.transforms.append(transforms.RandomCrop(32, padding=4))
-        aug_vae_transform_train.transforms.append(transforms.RandomHorizontalFlip())
-        if self.args.dataset not in ['fmnist']:
-            aug_vae_transform_train.transforms.append(RandAugment_no_CutOut(n=2, m=10))
-        aug_vae_transform_train.transforms.append(transforms.ToTensor())
+            '''Entrypoint of VAE training'''
+            if self.args.dataset == 'eicu':
+                self._train_vae_model_medical(round)
+            else:
+                self._train_vae_model_image(round)
         
 
-
-        train_dataset = Dataset_Personalize(self.train_ori_data, self.train_ori_targets, transform=train_transform)
-        aug_vae_dataset = Dataset_Personalize(self.train_ori_data, self.train_ori_targets,
-                                              transform=aug_vae_transform_train)
-        train_dataloader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=32, shuffle=True,
-                                                       drop_last=False)
-        aug_vae_dataloader = torch.utils.data.DataLoader(dataset=aug_vae_dataset, batch_size=32, shuffle=True,
-                                                         drop_last=False)
-
-        logging.info(f"client {self.client_index} is going to train own VAE-model to generate RX GX and RXnoise")
-
-        self.vae_model.to(self.device)
-        start_epoch = 1
-        for epoch in range(start_epoch, start_epoch + self.args.VAE_local_epoch):
-            self.aug_classifier_train(round, epoch, self.vae_optimizer, train_dataloader)
-            if self.args.VAE_adaptive == True:
-                if self.local_traindata_property == 1 or self.local_traindata_property == None:
-                    self.aug_VAE_train(round, epoch, self.vae_optimizer, aug_vae_dataloader)
-            else:
-                self.aug_VAE_train(round, epoch, self.vae_optimizer, aug_vae_dataloader)
-            self.train_whole_process(round, epoch, self.vae_optimizer, train_dataloader)
-        self.vae_model.cpu()
 
         
     def _train_vae_model_medical(self, round):
-
         
-        train_dataset = torch.utils.data.TensorDataset(
-            torch.FloatTensor(self.train_ori_data),
-            torch.LongTensor(self.train_ori_targets)
-        )
+        # Create balanced dataset if configured
+        if hasattr(self.args, 'VAE_target_pos_ratio') and self.args.VAE_target_pos_ratio is not None:
+            balanced_data, balanced_targets = self._create_balanced_vae_dataset()
+            # Maybe should use the custom medical dataset
+            train_dataset = torch.utils.data.TensorDataset(
+                torch.FloatTensor(balanced_data),
+                torch.LongTensor(balanced_targets)
+            )
+        else:
+            train_dataset = torch.utils.data.TensorDataset(
+                torch.FloatTensor(self.train_ori_data),
+                torch.LongTensor(self.train_ori_targets)
+            )
         
         trainloader = torch.utils.data.DataLoader(
             train_dataset,
@@ -410,11 +359,58 @@ class Client(PSTrainer):
             if epoch % 50 == 0:
                 self.test_local_vae(round, epoch, 'local')
                 
-        if round == 0 or round % 5 == 0: 
+        if round % 5 == 0: 
             self.validate_vae_performance(round)
             self.debug_feature_separation(round)
             
+
+
+    def test_local_vae(self, round, epoch, mode):
+
+        self.vae_model.to(self.device)
+        self.vae_model.eval()
+        
+        test_acc_avg = AverageMeter()
+        test_loss_avg = AverageMeter()
+        # note, for eicu data(extremely imbalanced, 0.54 positive rate), 
+        # we want to measure its AUPRC rather than accuracy
+        all_preds = []
+        all_targets = []
+    
+        with torch.no_grad():
+            for batch_idx, (x, y) in enumerate(self.test_dataloader):
+                x, y = x.to(self.device), y.to(self.device)
+                batch_size = x.size(0)
+                
+                output = self.vae_model.classifier_test(x)
+                
+                if output.dim() > 1 and output.size(-1) == 1:
+                    output = output.squeeze(-1)
+                
+                loss = F.binary_cross_entropy_with_logits(output, y.float())
+                probs = torch.sigmoid(output)
+                
+                all_preds.extend(probs.cpu().numpy())
+                all_targets.extend(y.float().cpu().numpy())
+                
+                preds = (probs > 0.5).float()
+                correct = (preds == y.float()).float().sum()
+                accuracy = correct / batch_size * 100
+                test_acc_avg.update(accuracy.item(), batch_size)
+                
+                test_loss_avg.update(loss.data.item(), batch_size)
+        
+        from sklearn.metrics import average_precision_score
+        auprc = average_precision_score(all_targets, all_preds)
+        logging.info("| VAE Testing Round %d Epoch %d | Test Loss: %.4f | Test Acc: %.4f | AUPRC: %.4f" %
+                    (round, epoch, test_loss_avg.avg, test_acc_avg.avg, auprc))
+    
+    # ===================================== End of VAE Training =================================
+
+
+    # ===================================== Phase 1.5: Share data step ==========================
     def generate_data_by_vae(self):
+        
         data = self.train_ori_data
         targets = self.train_ori_targets
         if self.args.dataset == 'eicu':
@@ -459,6 +455,10 @@ class Client(PSTrainer):
                     self.local_share_data1 = torch.cat((self.local_share_data1, rx_noise1))
                     self.local_share_data2 = torch.cat((self.local_share_data2, rx_noise2))
                     self.local_share_data_y = torch.cat((self.local_share_data_y, y))
+        
+        # Extract and save performance-sensitive features after VAE training completion
+        # if hasattr(self.args, 'extract_features') and self.args.extract_features:
+        #     self.extract_rx_features_for_visualization()
 
 
 
@@ -468,6 +468,15 @@ class Client(PSTrainer):
         return deepcopy(self.vae_model.get_classifier().cpu().state_dict())
 
 
+    def receive_global_share_data(self, data1, data2, y):
+        '''
+        data: Tensor [num, C, H, W] shared by server collected all clients generated by VAE
+        y: Tenosr [num, ] label corrospond to data
+        '''
+        self.global_share_data1 = data1.cpu()
+        self.global_share_y = y.cpu()
+        self.global_share_data2 = data2.cpu()
+        
     def sample_iid_data_from_share_dataset(self,share_data1, share_data2, share_y, share_data_mode = 1):
         # balanced sampling: sample equal amount for each class, if have remaining, sample randomly?
         # QUESTION: should do the same for eICU dataset?
@@ -508,6 +517,40 @@ class Client(PSTrainer):
         epoch_data_cls_counts_dict = {unq[i]: unq_cnt[i] for i in range(len(unq))}
 
         return epoch_data, epoch_label
+    
+    # TODO: double check its correctness
+    def _sample_shared_data_proportional(self, share_data1, share_data2, share_y, share_data_mode, pos_proportion=0.1):
+            '''Instead of balanced sampling as in original FedFed, we used porportional sampling for both positive and negative samples'''
+            share_data = share_data1 if share_data_mode == 1 else share_data2
+            target_total = min(self.local_sample_number, len(share_data))
+            
+            target_pos = int(target_total * pos_proportion)
+            target_neg = target_total - target_pos
+            
+            pos_indices = torch.where(share_y == 1)[0]
+            neg_indices = torch.where(share_y == 0)[0]
+            
+            actual_pos = min(target_pos, len(pos_indices))
+            actual_neg = min(target_neg, len(neg_indices))
+            
+            sampled_indices = []
+            
+            # Sample positive 
+            if actual_pos > 0:
+                selected_pos = pos_indices[torch.randperm(len(pos_indices))[:actual_pos]]
+                sampled_indices.append(selected_pos)
+            
+            # Sample negative
+            if actual_neg > 0:
+                selected_neg = neg_indices[torch.randperm(len(neg_indices))[:actual_neg]]
+                sampled_indices.append(selected_neg)
+            
+            if sampled_indices:
+                all_indices = torch.cat(sampled_indices)
+                return share_data[all_indices], share_y[all_indices]
+            else:
+                return torch.empty(0, share_data.shape[1]), torch.empty(0, dtype=share_y.dtype)
+
 
     def construct_mix_dataloader(self, share_data1, share_data2, share_y, share_data_mode=1):
         if self.args.dataset == 'eicu':
@@ -518,8 +561,7 @@ class Client(PSTrainer):
         
         
     def _construct_mix_dataloader_image(self, share_data1, share_data2, share_y, share_data_mode=1):
-
-        # two dataloader inclue shared data from server and local origin dataloader
+         # two dataloader inclue shared data from server and local origin dataloader
         train_ori_transform = transforms.Compose([])
         if self.args.dataset == 'fmnist':
             train_ori_transform.transforms.append(transforms.Resize(32))
@@ -545,70 +587,69 @@ class Client(PSTrainer):
         self.local_train_mixed_dataloader = torch.utils.data.DataLoader(dataset=train_dataset,
                                                                   batch_size=32, shuffle=True,
                                                                   drop_last=False)
-        return self.local_train_mixed_dataloader # PROBLEM: Repetitive, change later
         
     def _construct_mix_dataloader_medical(self, share_data1, share_data2, share_y, share_data_mode=1):
-
-        from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
+        """
+        Constructs 3-types simultaneous training dataloader for medical data following FedFed principles.
+        Uses raw shared data directly, same pattern as image implementation.
         
-        local_dataset = TensorDataset(
-            torch.FloatTensor(self.train_ori_data),
-            torch.LongTensor(self.train_ori_targets)
-        )
+        Training types:
+        1. Original complete features 
+        2. Raw rx_noise1 (shared performance-sensitive features + noise type 1)
+        3. Raw rx_noise2 (shared performance-sensitive features + noise type 2)
+        """
+        from torch.utils.data import DataLoader
         
-        if share_data1 is not None:
-            sampled_data, sampled_y = self._sample_shared_data_proportional(
-                share_data1, share_data2, share_y, share_data_mode
+        if share_data1 is not None and share_data2 is not None:
+            # Sample shared rx features (raw noise types 1 & 2) proportionally
+            rx_noise1_sampled, share_labels1 = self._sample_shared_data_proportional(
+                share_data1, share_data2, share_y, share_data_mode=1
+            )
+            rx_noise2_sampled, share_labels2 = self._sample_shared_data_proportional(
+                share_data1, share_data2, share_y, share_data_mode=2
             )
             
-            shared_dataset = TensorDataset(sampled_data, sampled_y.long())
+            # Convert to tensors
+            ori_data_tensor = torch.FloatTensor(self.train_ori_data)
+            ori_targets_tensor = torch.LongTensor(self.train_ori_targets)
             
-            # combine
-            mixed_dataset = ConcatDataset([local_dataset, shared_dataset])
+            # Create 3-types dataset using raw shared data directly (no reconstruction)
+            # Following same pattern as image implementation
+            train_dataset = Dataset_3Types_MedicalData(
+                ori_data=ori_data_tensor,           # Original features
+                share_data1=rx_noise1_sampled,      # Raw rx_noise1 directly  
+                share_data2=rx_noise2_sampled,      # Raw rx_noise2 directly
+                ori_targets=ori_targets_tensor,     # targets for type 1
+                share_targets1=share_labels1,       # targets for type 2
+                share_targets2=share_labels2        # targets for type 3
+            )
+            
+            self.local_train_mixed_dataloader = DataLoader(
+                train_dataset,
+                batch_size=self.args.batch_size,
+                shuffle=True,
+                drop_last=False
+            )
+            
+            print(f"Medical 3-types FedFed training: original={len(ori_data_tensor)}, "
+                  f"rx_noise1={len(rx_noise1_sampled)}, rx_noise2={len(rx_noise2_sampled)}")
         else:
-            mixed_dataset = local_dataset
-        
-        mixed_dataloader = DataLoader(
-            mixed_dataset,
-            batch_size=self.args.batch_size,
-            shuffle=True,
-            drop_last=True
-        )
-        
-        self.local_train_mixed_dataloader = mixed_dataloader
-        return mixed_dataloader 
+            local_dataset = TensorDataset(
+                torch.FloatTensor(self.train_ori_data),
+                torch.LongTensor(self.train_ori_targets)
+            )
+            self.local_train_mixed_dataloader = DataLoader(
+                local_dataset,
+                batch_size=self.args.batch_size,
+                shuffle=True,
+                drop_last=False
+            )
+            print("No shared data available - using original data only")
 
-    def _sample_shared_data_proportional(self, share_data1, share_data2, share_y, share_data_mode, pos_proportion=0.1):
-        '''Instead of balanced sampling as in original FedFed, we used porportional sampling for both positive and negative samples'''
-        share_data = share_data1 if share_data_mode == 1 else share_data2
-        target_total = min(self.local_sample_number, len(share_data))
-        
-        target_pos = int(target_total * pos_proportion)
-        target_neg = target_total - target_pos
-        
-        pos_indices = torch.where(share_y == 1)[0]
-        neg_indices = torch.where(share_y == 0)[0]
-        
-        actual_pos = min(target_pos, len(pos_indices))
-        actual_neg = min(target_neg, len(neg_indices))
-        
-        sampled_indices = []
-        
-        # Sample positive 
-        if actual_pos > 0:
-            selected_pos = pos_indices[torch.randperm(len(pos_indices))[:actual_pos]]
-            sampled_indices.append(selected_pos)
-        
-        # Sample negative
-        if actual_neg > 0:
-            selected_neg = neg_indices[torch.randperm(len(neg_indices))[:actual_neg]]
-            sampled_indices.append(selected_neg)
-        
-        if sampled_indices:
-            all_indices = torch.cat(sampled_indices)
-            return share_data[all_indices], share_y[all_indices]
-        else:
-            return torch.empty(0, share_data.shape[1]), torch.empty(0, dtype=share_y.dtype)
+        return self.local_train_mixed_dataloader 
+
+
+    
 
     def get_local_share_data(self, noise_mode):  # noise_mode means get RXnoise2 or RXnoise2
         if self.local_share_data1 is not None and noise_mode == 1:
@@ -617,6 +658,8 @@ class Client(PSTrainer):
             return self.local_share_data2, self.local_share_data_y
         else:
             raise NotImplementedError
+        
+    # ===================================== End of Data Sharing ===========================================
 
     def check_end_epoch(self):
         return (
@@ -764,7 +807,7 @@ class Client(PSTrainer):
     
     def debug_feature_separation(self, round_idx):
         """
-        Debug function to print actual feature values and understand what VAE is generating
+        generated feature debug
         """
         if self.args.dataset != 'eicu':
             return
@@ -813,24 +856,20 @@ class Client(PSTrainer):
             logging.info(f"L2 norms - Original: {x_norm:.4f}, xi: {xi_norm:.4f}, rx: {rx_norm:.4f}")
             logging.info(f"Compression ratio ||rx||/||x||: {(rx_norm/x_norm):.4f}")
             
-            # squared norm
             x_squared_norm = (torch.norm(x_original, dim=1) ** 2).mean()
             rx_squared_norm = (torch.norm(rx_sensitive, dim=1) ** 2).mean()
             compression_ratio_squared = rx_squared_norm / x_squared_norm
             logging.info(f"Squared norm compression ratio ||rx||²/||x||²: {compression_ratio_squared:.4f} (target: ≤0.25)")
             
-            # Check if reconstruction equation holds: x = xi + rx
             reconstruction_check = xi_robust + rx_sensitive
             equation_error = torch.nn.functional.mse_loss(reconstruction_check, x_original)
             logging.info(f"Equation check |x - (xi + rx)|: {equation_error.item():.8f}")
             
-            # Feature distribution analysis
             logging.info("\n--- Feature Distribution Analysis ---")
             logging.info(f"Original (x) - Mean: {x_original.mean():.4f}, Std: {x_original.std():.4f}")
             logging.info(f"Robust (xi) - Mean: {xi_robust.mean():.4f}, Std: {xi_robust.std():.4f}")
             logging.info(f"Sensitive (rx) - Mean: {rx_sensitive.mean():.4f}, Std: {rx_sensitive.std():.4f}")
             
-            # correlation analysis
             x_flat = x_original.flatten()
             xi_flat = xi_robust.flatten()
             rx_flat = rx_sensitive.flatten()
@@ -844,20 +883,10 @@ class Client(PSTrainer):
             logging.info(f"Corr(x, rx): {correlation_x_rx:.4f} (residual correlation)")
             logging.info(f"Corr(xi, rx): {correlation_xi_rx:.4f} (should be low - orthogonal)")
             
-            # Sample-wise analysis for first sample
             logging.info(f"\n--- Sample 0 Analysis (Target: {sample_targets[0].item()}) ---")
             sample_0_x = x_original[0]
             sample_0_xi = xi_robust[0]
             sample_0_rx = rx_sensitive[0]
-            
-            # top features
-            top_x_indices = torch.argsort(torch.abs(sample_0_x), descending=True)[:5]
-            top_xi_indices = torch.argsort(torch.abs(sample_0_xi), descending=True)[:5]
-            top_rx_indices = torch.argsort(torch.abs(sample_0_rx), descending=True)[:5]
-            
-            logging.info(f"Top 5 original features: indices {top_x_indices.tolist()} = {sample_0_x[top_x_indices].tolist()}")
-            logging.info(f"Top 5 robust features: indices {top_xi_indices.tolist()} = {sample_0_xi[top_xi_indices].tolist()}")
-            logging.info(f"Top 5 sensitive features: indices {top_rx_indices.tolist()} = {sample_0_rx[top_rx_indices].tolist()}")
             
             logging.info(f"{'='*60}\n")
 

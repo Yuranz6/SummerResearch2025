@@ -13,8 +13,6 @@ from data_preprocessing.build import load_data
 from data_preprocessing.cifar10.datasets import  Dataset_Personalize_4Tensor
 from utils.tool import *
 from model.build import create_model
-from torchvision.datasets import CIFAR10
-import torchvision.transforms as transforms
 
 # Import evaluation tests
 from evaluation.simple_feature_similarity import compute_client_feature_similarity

@@ -426,14 +426,7 @@ class Client(PSTrainer):
                 drop_last=True
             )
         else: 
-            generate_transform = transforms.Compose([])
-            if self.args.dataset == 'fmnist':
-                generate_transform.transforms.append(transforms.Resize(32))
-            generate_transform.transforms.append(transforms.ToTensor())
-            
-            generate_dataset = Dataset_Personalize(data, targets, transform=generate_transform)
-            generate_dataloader = torch.utils.data.DataLoader(dataset=generate_dataset, batch_size=self.args.VAE_batch_size,
-                                                            shuffle=False, drop_last=False)
+            raise ValueError(f"Dataset {self.args.dataset} not supported for client data generation")
 
         self.vae_model.to(self.device)
         self.vae_model.eval()

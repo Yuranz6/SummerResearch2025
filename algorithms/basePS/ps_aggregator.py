@@ -9,7 +9,6 @@ import numpy as np
 from model.FL_VAE import *
 from utils.tool import *
 from utils.set import *
-import torchvision.transforms as transforms
 from utils.log_info import log_info
 from utils.data_utils import (
     average_named_params,
@@ -264,16 +263,11 @@ class PSAggregator(object):
 
 
     def server_generate_data_by_vae(self):
-        generate_transform = transforms.Compose([])
-        if self.args.dataset == 'fmnist':
-            generate_transform.transforms.append(transforms.Resize(32))
-        generate_transform.transforms.append(transforms.ToTensor())
-        generate_dataset = torchvision.datasets.CIFAR10(self.args.data_dir, train=True, download=True, transform=generate_transform)
-
-        # generate_transform.transforms.append(transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)))
-
-        generate_dataloader = torch.utils.data.DataLoader(dataset=generate_dataset, batch_size=self.args.VAE_batch_size,
-                                                          shuffle=False, drop_last=False)
+        if self.args.dataset == 'eicu':
+            # For medical data, use the training dataloader directly
+            generate_dataloader = self.train_dataloader
+        else:
+            raise ValueError(f"Dataset {self.args.dataset} not supported for server data generation")
 
         self.vae_model.to(self.device)
         self.vae_model.eval()

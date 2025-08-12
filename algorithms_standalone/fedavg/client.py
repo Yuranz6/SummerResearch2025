@@ -72,23 +72,17 @@ class FedAVGClient(Client):
             train_kwargs['c_model_local'] = c_model_local
         # ========================SCAFFOLD=====================#
 
-        # main training logic
         share_data_mode = (round_idx % 2) + 1 if round_idx is not None else 1
         
-        # Construct mixed dataloader with shared data for both datasets
-        mixed_dataloader = self.construct_mix_dataloader(
-            share_data1, share_data2, share_y, share_data_mode=share_data_mode
-        )
         
-        # Train for specified epochs
+        
         for epoch in range(self.args.global_epochs_per_round):
-            global_epoch = round_idx * self.args.global_epochs_per_round + epoch
-            
-            if self.args.dataset != 'eicu':
-                self.lr_schedule(self.local_num_iterations, self.args.warmup_epochs)
-                
+            # can lr_schedule be used for medical?
+            # self.lr_schedule(self.local_num_iterations, self.args.warmup_epochs)
+            mixed_dataloader = self.construct_mix_dataloader(
+            share_data1, share_data2, share_y, share_data_mode=share_data_mode)    
             avg_loss = self.trainer.train_mix_dataloader(
-                global_epoch, mixed_dataloader, self.device, **train_kwargs
+                epoch, mixed_dataloader, self.device, **train_kwargs
             )
 
         # ========================SCAFFOLD=====================#

@@ -17,8 +17,8 @@ _C.model_input_channels = 3
 _C.model_output_dim = 10
 _C.algorithm = 'FedAvg'
 # fedprox
-_C.fedprox = False
-_C.fedprox_mu = 0.1
+_C.fedprox = True
+_C.fedprox_mu = 0.01
 _C.scaffold = False
 
 _C.global_epochs_per_round = 1

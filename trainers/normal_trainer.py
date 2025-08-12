@@ -258,9 +258,7 @@ class NormalTrainer(object):
             return loss_avg.avg
 
     def _train_mix_dataloader_medical(self, epoch, trainloader, device, **kwargs):
-        """
-        Medical-specific training implementation
-        """
+       
         self.model.to(device)
         self.model.train()
         
@@ -270,19 +268,30 @@ class NormalTrainer(object):
         logging.info('\n=> Training Epoch #%d, LR=%.4f' % 
                     (epoch, self.optimizer.param_groups[0]['lr']))
         
-        for batch_idx, (features, targets) in enumerate(trainloader):
-            X, y = features.to(device), targets.to(device)
-            batch_size = X.size(0)
+        for batch_idx, batch_data in enumerate(trainloader):
+            if len(batch_data) == 6: # with paired augmentation
+                x1, x2, x3, y1, y2, y3 = batch_data
+                x1, x2, x3, y1, y2, y3 = x1.to(device), x2.to(device), x3.to(device), \
+                                        y1.to(device), y2.to(device), y3.to(device)
+                
+                X = torch.cat((x1, x2, x3))
+                y = torch.cat((y1, y2, y3))
+                batch_size = x1.size(0)  
+                
+            elif len(batch_data) == 2:  # Standard (features, targets) format
+                features, targets = batch_data
+                X, y = features.to(device), targets.to(device)
+                batch_size = X.size(0)
+            else:
+                raise ValueError(f"Unexpected batch format with {len(batch_data)} elements")
             
             self.optimizer.zero_grad()
             
             out = self.model(X)
-            
 
             if out.dim() > 1 and out.size(-1) == 1:
                 out = out.squeeze(-1)
             
-            # Binary CE
             self.criterion = F.binary_cross_entropy_with_logits
             loss = self.criterion(out, y.float())
             
@@ -299,7 +308,6 @@ class NormalTrainer(object):
             loss.backward()
             self.optimizer.step()
             
-            # Calculate accuracy
             with torch.no_grad():
                 probs = torch.sigmoid(out)
                 predictions = (probs > 0.5).float()
@@ -318,52 +326,12 @@ class NormalTrainer(object):
     # ========================== Test on Server ==========================#
     
     def test_on_server_for_round(self, round, testloader, device):
-        if self.args.dataset == 'eicu':
-            return self._test_medical_auprc(round, testloader, device)
-        else:
-            return self._test_accuracy(round, testloader, device)
-    def _test_accuracy(self, round, testloader, device):
-        self.model.to(device)
-        self.model.eval()
-
-        test_acc_avg = AverageMeter()
-        test_loss_avg = AverageMeter()
-
-        total_loss_avg = 0
-        total_acc_avg = 0
-        with torch.no_grad():
-            for batch_idx, (x, y) in enumerate(testloader):
-                x, y = x.to(device), y.to(device).view(-1, )
-                batch_size = x.size(0)
-
-                out = self.model(x)
-
-                loss = self.criterion(out, y)
-                prec1, _ = accuracy(out.data, y)
-
-                n_iter = (round - 1) * len(testloader) + batch_idx
-                test_acc_avg.update(prec1.data.item(), batch_size)
-                test_loss_avg.update(loss.data.item(), batch_size)
-
-                log_info('scalar', '{role}_{index}_test_acc_epoch'.format(role=self.role, index=self.index),
-                         test_acc_avg.avg, step=n_iter,record_tool=self.args.record_tool,
-                     wandb_record=self.args.wandb_record)
-                total_loss_avg += test_loss_avg.avg
-                total_acc_avg += test_acc_avg.avg
-            total_acc_avg /= len(testloader)
-            total_loss_avg /= len(testloader)
-            log_info('scalar', '{role}_{index}_total_acc_epoch'.format(role=self.role, index=self.index),
-                     total_acc_avg, step=round,record_tool=self.args.record_tool,
-                     wandb_record=self.args.wandb_record)
-            log_info('scalar', '{role}_{index}_total_loss_epoch'.format(role=self.role, index=self.index),
-                     total_loss_avg, step=round, record_tool=self.args.record_tool,
-                     wandb_record=self.args.wandb_record)
-            return total_acc_avg
+        return self._test_medical_auprc(round, testloader, device)
+        
+    
         
     def _test_medical_auprc(self, round, testloader, device):
-        """
-        Medical-specific evaluation using AUPRC
-        """
+
         import sklearn
         from sklearn.metrics import average_precision_score, roc_auc_score
         
@@ -406,6 +374,5 @@ class NormalTrainer(object):
         logging.info('| Test Round: %d | Loss: %.4f | Accuracy: %.2f%% | AUPRC: %.4f | AUC-ROC: %.4f' %
                     (round, avg_loss, accuracy, auprc, auc_roc))
         
-        # Return AUPRC as primary metric
         return auprc
     

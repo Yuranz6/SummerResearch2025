@@ -60,7 +60,7 @@ class Client(PSTrainer):
             self.loss = F.cross_entropy
 
 # -------------------------Feature extraction setup------------------------#
-        self.feature_extractor = FeatureExtractor(output_dir=f"feature_analysis_client_{self.client_index}")
+        # self.feature_extractor = FeatureExtractor(output_dir=f"feature_analysis_client_{self.client_index}")
         # Store hospital ID if available (for visualization)
         self.hospital_id = getattr(args, 'hospital_id', None)
         
@@ -609,12 +609,10 @@ class Client(PSTrainer):
                 share_data1, share_data2, share_y, share_data_mode=2
             )
             
-            # Convert to tensors
             ori_data_tensor = torch.FloatTensor(self.train_ori_data)
             ori_targets_tensor = torch.LongTensor(self.train_ori_targets)
             
             # Create 3-types dataset using raw shared data directly (no reconstruction)
-            # Following same pattern as image implementation
             train_dataset = Dataset_3Types_MedicalData(
                 ori_data=ori_data_tensor,           # Original features
                 share_data1=rx_noise1_sampled,      # Raw rx_noise1 directly  
@@ -692,7 +690,7 @@ class Client(PSTrainer):
         # logging.info(self.trainer.optimizer.state.values())
         if len(list(self.trainer.optimizer.state.values())) > 0:
             optimizer_to(self.trainer.optimizer, device)
-
+    # ===================================== PHASE 2: Federated Training =====================================
     def lr_schedule(self, num_iterations, warmup_epochs):
         epochs = self.client_timer.local_outer_epoch_idx
         iterations = self.client_timer.local_outer_iter_idx

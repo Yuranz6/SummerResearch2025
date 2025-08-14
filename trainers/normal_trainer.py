@@ -190,6 +190,61 @@ class NormalTrainer(object):
         else:
             # Original image training with three data sources
             return self._train_mix_dataloader_image(epoch, trainloader, device, **kwargs)
+    
+    def train_dataloader(self, epoch, trainloader, device, **kwargs):
+        """Training method for standard federated learning without VAE data mixing"""
+        self.model.to(device)
+        self.model.train()
+        self.model.training = True
+
+        loss_avg = AverageMeter()
+        acc = AverageMeter()
+
+        if self.args.dataset != 'eicu': # part below is adapted for medical only, img data not adapted
+          raise NotImplementedError
+
+        logging.info('\n=> Training Epoch #%d, LR=%.4f' % (epoch, self.optimizer.param_groups[0]['lr']))
+        for batch_idx, (x, y) in enumerate(trainloader):
+            x, y = x.to(device), y.to(device)
+            batch_size = x.size(0)
+            self.optimizer.zero_grad()
+
+            out = self.model(x)
+            
+            if out.dim() > 1 and out.size(-1) == 1:
+                out = out.squeeze(-1)
+            self.criterion = F.binary_cross_entropy_with_logits
+
+            loss = self.criterion(out, y.float())
+
+            # ========================FedProx=====================#
+            if self.args.fedprox:
+                fed_prox_reg = 0.0
+                previous_model = kwargs["previous_model"]
+                
+                for name, param in self.model.named_parameters():
+                    prev_param = previous_model[name].data.to(device)
+                    param_diff_squared = torch.norm(param - prev_param, p=2)**2  # L2 norm squared
+                    fed_prox_reg += (self.args.fedprox_mu / 2) * param_diff_squared
+                
+                loss += fed_prox_reg
+            # ========================FedProx=====================#
+
+            loss.backward()
+            self.optimizer.step()
+
+            with torch.no_grad():
+                probs = torch.sigmoid(out)
+                predictions = (probs > 0.5).float()
+                correct = (predictions == y.float()).float().sum()
+                accuracy = correct / batch_size * 100
+            
+            loss_avg.update(loss.data.item(), batch_size)
+            acc.update(accuracy.item(), batch_size)
+            
+            if (batch_idx + 1) % 50 == 0:
+                logging.info('| Epoch [%3d] Iter[%3d/%3d]\t\tLoss: %.4f Acc@1: %.3f%%' %
+                            (epoch, batch_idx + 1, len(trainloader), loss_avg.avg, acc.avg))
 
     def _train_mix_dataloader_image(self, epoch, trainloader, device, **kwargs):
         self.model.to(device)

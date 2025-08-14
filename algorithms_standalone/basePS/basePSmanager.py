@@ -118,8 +118,8 @@ class BasePSManager(object):
         self._get_local_shared_data()
         
         # Experiments after VAE training done
-        self._test_feature_similarity()     
-        self._test_cross_hospital_generalization()
+        # self._test_feature_similarity()     
+        # self._test_cross_hospital_generalization()
 
         self.aggregator.save_vae_param()
 
@@ -325,6 +325,9 @@ class BasePSManager(object):
         self.aggregator.save_classifier()
         self._save_training_results()
         
+        # Bootstrap evaluation integration
+        self._run_bootstrap_evaluation()
+        
 
     
     def _save_training_results(self):
@@ -356,6 +359,45 @@ class BasePSManager(object):
         logging.info(f'Training completed!!! final accuracy: {self. test_acc_list[-1]}')
         logging.info(f"Training results saved to {os.path.join(output_dir, filename)}")
     
+    def _run_bootstrap_evaluation(self):
+        try:
+            from evaluation.integration_helper import run_post_training_evaluation
+            
+            if not getattr(self.args, 'run_bootstrap_evaluation', False):
+                return
+                
+            if not getattr(self.args, 'unseen_hospital_test', False):
+                logging.info("Bootstrap evaluation requires unseen_hospital_test=True")
+                return
+            # Maybe this part can be further simplified?
+            target_hospital_data = {'x_target': None, 'y_target': None}
+            all_x, all_y = [], []
+            
+            for batch_x, batch_y in self.test_data_global_dl:
+                all_x.append(batch_x)
+                all_y.append(batch_y)
+            
+            if len(all_x) > 0:
+                target_hospital_data['x_target'] = torch.cat(all_x, dim=0)
+                target_hospital_data['y_target'] = torch.cat(all_y, dim=0)
+                
+                # Get trained model from aggregator
+                trained_model = self.aggregator.get_global_model()
+                
+                # Run bootstrap evaluation
+                results = run_post_training_evaluation(
+                    self.args, trained_model, target_hospital_data, self.device
+                )
+                
+                if results:
+                    logging.info("Bootstrap evaluation completed successfully")
+            else:
+                logging.warning("No target hospital data found for bootstrap evaluation")
+                
+        except ImportError:
+            logging.warning("Evaluation modules not available - skipping bootstrap evaluation")
+        except Exception as e:
+            logging.error(f"Bootstrap evaluation failed: {e}")
     
     @abstractmethod
     def algorithm_train(self, round_idx, client_indexes, named_params, params_type,

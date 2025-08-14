@@ -149,18 +149,21 @@ class Data_Loader(object):
                 
         unseen_hospital_test = getattr(self.args, 'unseen_hospital_test', False)
         target_hospital_id = getattr(self.args, 'target_hospital_id', None)
+        target_hospital_list = getattr(self.args, 'target_hospital_list', [])
+        auto_select_hospitals = getattr(self.args, 'auto_select_hospitals', True)
+        
         from .eicu.data_loader import partition_eicu_data_by_hospital
         self.client_dataidx_map_train, self.client_dataidx_map_test, self.train_cls_local_counts_dict, excluded_hospital_data = partition_eicu_data_by_hospital(
-            train_ds, self.client_number, unseen_hospital_test=unseen_hospital_test, target_hospital_id=target_hospital_id
+            train_ds, self.client_number, unseen_hospital_test=unseen_hospital_test, target_hospital_id=target_hospital_id,
+            target_hospital_list=target_hospital_list, auto_select_hospitals=auto_select_hospitals
         )
-        
         self.client_dataidx_map = self.client_dataidx_map_train
         
         logging.info("train_cls_local_counts_dict = " + str(self.train_cls_local_counts_dict))
         
         # global data loaders 
         if excluded_hospital_data is not None:
-            
+            self.client_number = len(self.client_dataidx_map_train)
             excluded_hospital_ds = self.sub_data_obj(self.datadir, dataidxs=excluded_hospital_data, 
                                                    train=True, transform=None, full_dataset=train_ds)
             

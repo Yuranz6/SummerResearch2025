@@ -185,3 +185,18 @@ _C.unseen_hospital_test = False
 _C.target_hospital_id = 199
 
 _C.extract_features = True
+
+_C.run_bootstrap_evaluation = True
+_C.bootstrap_seeds = 100
+_C.eval_test_size = 0.5
+_C.eval_val_size = 0.5
+_C.eval_metric = "auprc"
+
+_C.target_hospital_list = []  # If empty, use auto-selection
+_C.auto_select_hospitals = True
+
+_C.eval_algorithms = ["fedavg", "fedprox", "fedfed"]
+
+# Output settings
+_C.output_path = "./output/evaluation_results"
+_C.create_evaluation_plots = True 

@@ -226,93 +226,76 @@ class Visualization:
         logging.info(f"Performance summary saved: {csv_filepath}")
         
         return df
+    1
     
-    def create_grouped_bar_plot(self, hospital_ids, metric='auprc', algorithms=['fedavg', 'fedprox', 'fedfed']):
+    def create_grouped_boxplot(self, hospital_ids, metric='auprc', algorithms=['fedavg', 'fedprox', 'fedfed']):
         """
-        Create grouped bar plot comparing algorithms across multiple hospitals
+        Create grouped box plot comparing algorithms across multiple hospitals
         X-axis: Hospital IDs
-        For each hospital: 3 bars (one for each algorithm)
-        Similar to FedWeight visualization style
+        For each hospital: 3 box plots (one for each algorithm)
         """
-        hospital_data = {}
+        all_data = []
         
-        # Collect data for each hospital
+        # Collect data for each hospital and algorithm
         for hospital_id in hospital_ids:
             results_data = self.load_comparison_results(hospital_id)
             if results_data is not None:
-                hospital_data[hospital_id] = {}
                 for algorithm in algorithms:
                     if algorithm in results_data.get('results', {}):
                         alg_results = results_data['results'][algorithm]
-                        if metric in alg_results:
-                            hospital_data[hospital_id][algorithm] = alg_results[metric]['mean']
-                        else:
-                            hospital_data[hospital_id][algorithm] = 0.0
-                    else:
-                        hospital_data[hospital_id][algorithm] = 0.0
+                        if metric in alg_results and 'valid_values' in alg_results[metric]:
+                            values = alg_results[metric]['valid_values']
+                            for value in values:
+                                all_data.append({
+                                    'Hospital': str(hospital_id),
+                                    'Algorithm': algorithm.upper(),
+                                    metric.upper(): value
+                                })
         
-        if not hospital_data:
-            logging.error("No data found for grouped bar plot")
+        if not all_data:
+            logging.error("No data found for grouped box plot")
             return None
         
-        # Prepare data for plotting
-        hospital_labels = [str(h_id) for h_id in hospital_ids]
-        algorithm_colors = {'fedavg': '#5faffa', 'fedprox': '#fa8296', 'fedfed': '#50c8a3'}
-        algorithm_names = {'fedavg': 'FedAvg', 'fedprox': 'FedProx', 'fedfed': 'FedFed'}
+        df = pd.DataFrame(all_data)
         
-        # Set up the plot
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig, ax = plt.subplots(figsize=(14, 6))
         
-        # Bar width and positions
-        bar_width = 0.25
-        x_positions = np.arange(len(hospital_ids))
+        sns.boxplot(
+            data=df,
+            x='Hospital',
+            y=metric.upper(),
+            hue='Algorithm',
+            ax=ax,
+            palette={'FEDAVG': '#5faffa', 'FEDPROX': '#fa8296', 'FEDFED': '#50c8a3'}
+        )
         
-        # Plot bars for each algorithm
-        for i, algorithm in enumerate(algorithms):
-            values = [hospital_data.get(h_id, {}).get(algorithm, 0.0) for h_id in hospital_ids]
-            colors = [algorithm_colors.get(algorithm, '#333333')] * len(values)
-            
-            bars = ax.bar(
-                x_positions + i * bar_width, 
-                values, 
-                bar_width,
-                label=algorithm_names.get(algorithm, algorithm.upper()),
-                color=algorithm_colors.get(algorithm, '#333333'),
-                alpha=0.8
-            )
-            
-            # Add value labels on top of bars (optional)
-            for bar in bars:
-                height = bar.get_height()
-                if height > 0:
-                    ax.text(bar.get_x() + bar.get_width()/2., height + 0.005,
-                           f'{height:.3f}', ha='center', va='bottom', fontsize=9)
-        
-        # Customize the plot
         ax.set_xlabel('Target Hospital', fontsize=12, fontweight='bold')
         ax.set_ylabel(f'{metric.upper()}', fontsize=12, fontweight='bold')
         ax.set_title(f'Algorithm Comparison Across Target Hospitals - {metric.upper()}', 
                     fontsize=14, fontweight='bold')
         
-        # Set x-axis labels
-        ax.set_xticks(x_positions + bar_width)
-        ax.set_xticklabels(hospital_labels)
+        ax.legend(title='Algorithm', title_fontsize=11, fontsize=10, loc='upper right')
         
-        # Add legend
-        ax.legend(title='Algorithm', loc='upper right')
-        
-        # Add grid for better readability
         ax.grid(True, alpha=0.3, axis='y')
         ax.set_axisbelow(True)
         
-        # Adjust layout
+        hospitals = df['Hospital'].unique()
+        algorithms_list = df['Algorithm'].unique()
+        
+        for i, hospital in enumerate(hospitals):
+            for j, algorithm in enumerate(algorithms_list):
+                subset = df[(df['Hospital'] == hospital) & (df['Algorithm'] == algorithm)]
+                if not subset.empty:
+                    mean_val = subset[metric.upper()].mean()
+                    x_pos = i + (j - 1) * 0.27  # Adjust spacing based on seaborn's grouping
+                    ax.scatter(x_pos, mean_val, color='red', s=50, zorder=3, marker='D')
+        
         plt.tight_layout()
         
-        # Save plot
-        plot_filename = f"grouped_bar_{metric}_comparison.png"
+        plot_filename = f"grouped_boxplot_{metric}_comparison.png"
         plot_filepath = os.path.join(self.output_path, plot_filename)
         plt.savefig(plot_filepath, dpi=300, bbox_inches='tight')
         
-        logging.info(f"Grouped bar plot saved: {plot_filepath}")
+        logging.info(f"Grouped box plot saved: {plot_filepath}")
         
         return fig, ax

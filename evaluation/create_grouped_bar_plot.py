@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Create grouped bar plot from multiple target hospital comparison results
-Usage: python create_grouped_bar_plot.py
+Create grouped box plot from multiple target hospital comparison results
+Usage: python create_grouped_boxplot.py
 """
 
 import os
@@ -14,7 +14,7 @@ from evaluation.visualization import Visualization
 
 def main():
     """
-    Create grouped bar plot comparing algorithms across multiple target hospitals
+    Create grouped box plot comparing algorithms across multiple target hospitals
     """
     
     logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -27,7 +27,9 @@ def main():
     
     algorithms = ['fedavg', 'fedprox', 'fedfed']
     
-    print(f"Creating grouped bar plots for hospitals: {hospital_ids}")
+    hospital_ids = [167, 420, 199, 458]  
+    
+    print(f"Creating grouped box plots for hospitals: {hospital_ids}")
     print(f"Output directory: {output_path}")
     
     vis = Visualization(output_path)

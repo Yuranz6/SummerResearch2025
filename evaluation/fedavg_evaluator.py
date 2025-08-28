@@ -28,59 +28,52 @@ class FedAvgEvaluator:
         
         global_params = global_model.state_dict()
         
+        local_models = []
+        model_trainers = []
+        for client_idx, train_loader in enumerate(train_data_loaders):
+            local_model = create_model(
+                self.args,
+                model_name=self.args.model,
+                output_dim=self.args.model_output_dim,
+                device=self.device
+            )
+            local_models.append(local_model)
+            
+            model_trainer = create_trainer(
+                self.args, self.device, local_model,
+                class_num=2,  
+                client_index=client_idx, role='client'
+            )
+            model_trainers.append(model_trainer)
+        
         for round_idx in range(self.args.comm_round):
             logging.info(f"FedAvg Round {round_idx + 1}/{self.args.comm_round}")
             
             client_params_list = []
             client_weights = []
             
-            for client_idx, train_loader in enumerate(train_data_loaders):
-                local_model = create_model(
-                    self.args,
-                    model_name=self.args.model,
-                    output_dim=self.args.model_output_dim,
-                    device=self.device
-                )
+            for client_idx, (train_loader, local_model, model_trainer) in enumerate(zip(train_data_loaders, local_models, model_trainers)):
                 local_model.load_state_dict(copy.deepcopy(global_params))
-                
-                # local trainers
-                model_trainer = create_trainer(
-                    self.args, self.device, local_model,
-                    class_num=2,  
-                    client_index=client_idx, role='client'
-                )
-                
-                # Ensure FedProx is disabled for pure FedAvg
+                # safety check
                 original_fedprox = self.args.fedprox
                 self.args.fedprox = False
                 
-                # Local training for FedAvg using standard dataloader
                 for epoch in range(self.args.global_epochs_per_round):
                     model_trainer.train_dataloader(
                         epoch, train_loader, self.device
                     )
                 
-                # Restore FedProx setting
                 self.args.fedprox = original_fedprox
                 
                 local_params = local_model.state_dict()
                 client_params_list.append(local_params)
                 client_weights.append(len(train_loader.dataset))
             
-            # FedAvg aggregation
             global_params = self._fedavg_aggregate(client_params_list, client_weights)
             
-            # Update global model
             global_model.load_state_dict(global_params)
             
-            if validation_data is not None and (round_idx + 1) % 10 == 0:
-                val_metrics = MedicalMetrics.evaluate_model(
-                    global_model, 
-                    validation_data['x_target_val'], 
-                    validation_data['y_target_val'], 
-                    self.device
-                )
-                logging.info(f"FedAvg Round {round_idx + 1} Validation - AUPRC: {val_metrics['auprc']:.4f}")
+        
         
         logging.info("FedAvg training completed")
         return global_model
@@ -91,19 +84,16 @@ class FedAvgEvaluator:
         aggregated_params = {}
         
         param_names = client_params_list[0].keys()
-        
-        # Weighted averaging
+        # should be correct
         for param_name in param_names:
-            # Skip num_batches_tracked as it should not be averaged
-            if 'num_batches_tracked' in param_name:
-                # Just use the first client's value for tracking parameters
-                aggregated_params[param_name] = client_params_list[0][param_name].clone()
-                continue
-                
             aggregated_params[param_name] = torch.zeros_like(client_params_list[0][param_name])
             
-            for client_params, weight in zip(client_params_list, client_weights):
-                aggregated_params[param_name] += (weight / total_weight) * client_params[param_name]
+            for i, (client_params, weight) in enumerate(zip(client_params_list, client_weights)):
+                factor = weight / total_weight
+                if i == 0:
+                    aggregated_params[param_name] = (client_params[param_name] * factor).type(aggregated_params[param_name].dtype)
+                else:
+                    aggregated_params[param_name] += (client_params[param_name].to(aggregated_params[param_name].device)*factor).type(aggregated_params[param_name].dtype)
         
         return aggregated_params
     

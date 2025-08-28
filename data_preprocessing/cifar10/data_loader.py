@@ -259,8 +259,8 @@ def get_dataloader_CIFAR10(datadir, train_bs, test_bs, dataidxs=None,
     if args.batch_size > len(train_ds):
         drop_last = False
 
-    train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, shuffle=True, drop_last=drop_last)
-    test_dl = data.DataLoader(dataset=test_ds, batch_size=test_bs, shuffle=False, drop_last=False)
+    train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, shuffle=True, drop_last=drop_last, num_workers=1)
+    test_dl = data.DataLoader(dataset=test_ds, batch_size=test_bs, shuffle=False, drop_last=False, num_workers=1)
 
     return train_dl, test_dl
 

@@ -6,43 +6,43 @@ evaluation:
   # Enable/disable specific experiments
   enable_feature_similarity: True
   enable_cross_hospital_generalization: True
-  
+
   # General settings
   save_results: True
   results_dir: "./output/evaluation/"
-  
+
 # Cross-hospital generalization experiment settings
 cross_hospital_generalization:
   # Dataset configuration
-  test_dataset: "global"  # Options: "global", "local", "both"
-  
+  test_dataset: "global" # Options: "global", "local", "both"
+
   # Evaluation settings
-  evaluation_metric: "auprc"  # Options: "auprc", "auroc", "accuracy", "f1"
-  
+  evaluation_metric: "auprc" # Options: "auprc", "auroc", "accuracy", "f1"
+
   # Classifier configuration
   classifier_epochs: 50
   classifier_lr: 0.001
-  classifier_hidden_dims: [128, 64]
+  classifier_hidden_dims: [256, 256]
   classifier_dropout: 0.2
-  
+
   # Training data configuration
-  mixed_data_ratio: 0.5  # Ratio of shared data in mixed training (0.0-1.0)
-  
+  mixed_data_ratio: 0.5 # Ratio of shared data in mixed training (0.0-1.0)
+
   # Experiment parameters
-  noise_modes: [1, 2]  # Which VAE noise modes to test
-  
+  noise_modes: [1, 2] # Which VAE noise modes to test
+
   # Output settings
   save_results: True
   results_filename: "cross_hospital_generalization_results.json"
-  
-# Feature similarity experiment settings  
+
+# Feature similarity experiment settings
 feature_similarity:
   # Similarity computation
-  similarity_metric: "cosine"  # Options: "cosine", "euclidean", "pearson"
-  
+  similarity_metric: "cosine" # Options: "cosine", "euclidean", "pearson"
+
   # Experiment parameters
-  noise_modes: [1, 2]  # Which VAE noise modes to test
-  
+  noise_modes: [1, 2] # Which VAE noise modes to test
+
   # Analysis settings
   show_pairwise_similarities: True
   similarity_interpretation_thresholds:
@@ -51,7 +51,7 @@ feature_similarity:
     moderate: 0.4
     low: 0.2
     very_low: 0.0
-  
+
   # Output settings
   save_results: True
   results_filename: "feature_similarity_results.json"

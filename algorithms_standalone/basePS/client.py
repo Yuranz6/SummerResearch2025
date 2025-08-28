@@ -9,14 +9,14 @@ from copy import deepcopy
 import numpy as np
 import torch
 import torch.nn.functional as F
-
+from torch.utils.data import DataLoader
 from algorithms.basePS.ps_client_trainer import PSTrainer
 from utils.data_utils import optimizer_to
 from model.FL_VAE import *
 from optim.AdamW import AdamW
 from utils.tool import *
 from utils.set import *
-from data_preprocessing.cifar10.datasets import Dataset_Personalize, Dataset_3Types_ImageData, Dataset_3Types_MedicalData
+from data_preprocessing.cifar10.datasets import Dataset_Personalize, Dataset_3Types_ImageData, Dataset_3Types_MedicalData, Dataset_2Types_MedicalData
 import torchvision.transforms as transforms
 from utils.log_info import log_info
 from utils.randaugment4fixmatch import RandAugmentMC, Cutout, RandAugment_no_CutOut 
@@ -80,15 +80,16 @@ class Client(PSTrainer):
         return rand
 
     def _set_local_traindata_property(self):
-        class_num = len(self.train_cls_counts_dict)
-        clas_counts = [ self.train_cls_counts_dict[key] for key in self.train_cls_counts_dict.keys()]
-        max_cls_counts = max(clas_counts)
-        if self.local_sample_number < self.dataset_num/self.args.client_num_in_total * 0.2:
-            self.local_traindata_property = 1 # 1 means quantity skew is very heavy
-        elif self.local_sample_number > self.dataset_num/self.args.client_num_in_total * 0.2 and max_cls_counts > self.local_sample_number * 0.7:
-            self.local_traindata_property = 2 # 2 means label skew is very heavy
-        else:
-            self.local_traindata_property = None
+        # class_num = len(self.train_cls_counts_dict)
+        # clas_counts = [ self.train_cls_counts_dict[key] for key in self.train_cls_counts_dict.keys()]
+        # max_cls_counts = max(clas_counts)
+        # if self.local_sample_number < self.dataset_num/self.args.client_num_in_total * 0.2:
+        #     self.local_traindata_property = 1 # 1 means quantity skew is very heavy
+        # elif self.local_sample_number > self.dataset_num/self.args.client_num_in_total * 0.2 and max_cls_counts > self.local_sample_number * 0.7:
+        #     self.local_traindata_property = 2 # 2 means label skew is very heavy
+        # else:
+        #     self.local_traindata_property = None
+        self.local_traindata_property = 2 # eicu data has heavy label skew
 
 # ================================= Phase 1: VAE Train =================================
 
@@ -251,24 +252,28 @@ class Client(PSTrainer):
             if epoch < 10:
                 re = 5 * self.args.VAE_re
             elif epoch < 20:
-                re = 2 * self.args.VAE_re
+                re = 3 * self.args.VAE_re
             else:
                 re = self.args.VAE_re
             
 
             optimizer.zero_grad()
-            out, hi, gx, mu, logvar, rx, rx_noise1, rx_noise2 = self.vae_model(x)
+            out, hi, gx, mu, logvar, rx, rx_noise1 = self.vae_model(x)
             y = y.float()
             if out.dim() > 1 and out.size(-1) == 1:
                 out_binary = out.squeeze(-1)
             else:
                 out_binary = out
             
-            # focal loss for imbalanced data
-            cross_entropy = self.loss(out_binary[:batch_size*2], y.repeat(2)) # classification CE loss on noisy performance sensitive features rx_noise
-            x_ce_loss = self.loss(out_binary[batch_size*2:], y) # CE loss on original features x(bn_x)
+            
+            x_ce_loss = self.loss(out_binary[batch_size:], y) 
+            
+            # Compute performance-sensitive loss (trains VAE only)
+            cross_entropy = self.loss(out_binary[:batch_size], y) # CE loss on rx_noise1 - gradients flow to VAE only
+            
+            
             l1 = F.mse_loss(gx, x) # reconstruction loss on generated features (performance-robust)
-            l2 = cross_entropy # CE loss on noisy performance sensitive features rx_noise
+            l2 = cross_entropy # CE loss on noisy performance sensitive features - VAE training signal
             l3 = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
             l3 /= batch_size * self.vae_model.latent_dim # KL 
             
@@ -282,14 +287,10 @@ class Client(PSTrainer):
 
             
             if self.args.VAE_adaptive:
-                if self.local_traindata_property == 1 :
-                    loss = 5 * re * l1 + self.args.VAE_ce * l2 + 0.5 * self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss 
                 if self.local_traindata_property == 2 :
-                    loss = re * l1 + 5 * self.args.VAE_ce * l2 + 5 * self.args.VAE_kl * l3 + 5 * self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss 
-                if self.local_traindata_property == None:
-                    loss = re * l1 + self.args.VAE_ce * l2 + self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss 
+                    loss = re * l1 + 3 * self.args.VAE_ce * l2 + 3 * self.args.VAE_kl * l3 + 3 * self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss # label skew
             else: 
-                loss = re * l1 + self.args.VAE_ce * l2 + self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss
+                loss = re * l1 + self.args.VAE_ce * l2 + self.args.VAE_kl * l3 + self.args.VAE_x_ce * x_ce_loss + sparsity_weight * sparsity_loss 
             
     
             loss.backward()
@@ -348,7 +349,7 @@ class Client(PSTrainer):
             train_dataset,
             batch_size=self.args.VAE_batch_size,
             shuffle=True,
-            drop_last=True
+            drop_last=False
         )
         
         for epoch in range(self.args.VAE_local_epoch):
@@ -359,9 +360,9 @@ class Client(PSTrainer):
             if epoch % 50 == 0:
                 self.test_local_vae(round, epoch, 'local')
                 
-        if round % 5 == 0: 
-            self.validate_vae_performance(round)
-            self.debug_feature_separation(round)
+        # if round % 5 == 0: 
+        #     self.validate_vae_performance(round)
+        #     self.debug_feature_separation(round)
             
 
 
@@ -413,6 +414,7 @@ class Client(PSTrainer):
         
         data = self.train_ori_data
         targets = self.train_ori_targets
+        print(f"[DEBUG] Client {self.client_index}: Input data shape {data.shape}")
         if self.args.dataset == 'eicu':
             train_dataset = torch.utils.data.TensorDataset(
             torch.FloatTensor(data),
@@ -422,8 +424,8 @@ class Client(PSTrainer):
             generate_dataloader = torch.utils.data.DataLoader(
                 train_dataset,
                 batch_size=self.args.VAE_batch_size,
-                shuffle=True,
-                drop_last=True
+                shuffle=False,
+                drop_last=False
             )
         else: 
             raise ValueError(f"Dataset {self.args.dataset} not supported for client data generation")
@@ -436,25 +438,21 @@ class Client(PSTrainer):
             for batch_idx, (x, y) in enumerate(generate_dataloader):
                 # distribute data to device
                 x, y = x.to(self.device), y.to(self.device).view(-1, )
-                _, _, gx, _, _, rx, rx_noise1, rx_noise2 = self.vae_model(x)
+                _, _, gx, _, _, rx, rx_noise1 = self.vae_model(x)
 
                 batch_size = x.size(0)
 
                 if batch_idx == 0:
                     self.local_share_data1 = rx_noise1
-                    self.local_share_data2 = rx_noise2
+                    self.local_share_data2 = None
                     self.local_share_data_y = y
                 else:
-                    self.local_share_data1 = torch.cat((self.local_share_data1, rx_noise1))
-                    self.local_share_data2 = torch.cat((self.local_share_data2, rx_noise2))
+                    self.local_share_data1 = torch.cat((self.local_share_data1, rx_noise1))  
                     self.local_share_data_y = torch.cat((self.local_share_data_y, y))
-        
+        print(f"[DEBUG] Client {self.client_index}: Generated {self.local_share_data1.shape}        features")
         # Extract and save performance-sensitive features after VAE training completion
         # if hasattr(self.args, 'extract_features') and self.args.extract_features:
         #     self.extract_rx_features_for_visualization()
-
-
-
 
     # got the classifier parameter from the whole VAE model
     def get_generate_model_classifer_para(self):
@@ -474,10 +472,10 @@ class Client(PSTrainer):
         # balanced sampling: sample equal amount for each class, if have remaining, sample randomly?
         # QUESTION: should do the same for eICU dataset?
         # random.seed(random.randint(0,10000))
-        if share_data_mode == 1 and share_data1 is None:
+        if share_data_mode != 1:
+            raise RuntimeError(f"Single XS version: Only share_data_mode=1 supported, got {share_data_mode}")
+        if share_data1 is None:
             raise RuntimeError("Not get shared data TYPE1")
-        if share_data_mode == 2 and share_data2 is None:
-            raise RuntimeError("Not get shared data TYPE2")
         smaple_num = self.local_sample_number
         smaple_num_each_cls = smaple_num // self.args.num_classes
         last = smaple_num - smaple_num_each_cls * self.args.num_classes 
@@ -486,23 +484,14 @@ class Client(PSTrainer):
             indexes = list(np.where(np_y == label)[0])
             sample = random.sample(indexes, smaple_num_each_cls)
             if label == 0:
-                if share_data_mode == 1:
-                    epoch_data = share_data1[sample]
-                elif share_data_mode==2:
-                    epoch_data = share_data2[sample]
+                epoch_data = share_data1[sample]
                 epoch_label = share_y[sample]
             else:
-                if share_data_mode == 1:
-                    epoch_data = torch.cat((epoch_data, share_data1[sample]))
-                elif share_data_mode ==2:
-                    epoch_data = torch.cat((epoch_data, share_data2[sample]))
+                epoch_data = torch.cat((epoch_data, share_data1[sample]))
                 epoch_label = torch.cat((epoch_label, share_y[sample]))
 
         last_sample =  random.sample(range(len(share_y)), last) # sample randomly from remaining  
-        if share_data_mode == 1:
-            epoch_data = torch.cat((epoch_data, share_data1[last_sample]))
-        elif share_data_mode == 2:
-            epoch_data = torch.cat((epoch_data, share_data2[last_sample]))
+        epoch_data = torch.cat((epoch_data, share_data1[last_sample]))
         epoch_label = torch.cat((epoch_label, share_y[last_sample]))
 
         # statitics
@@ -512,19 +501,17 @@ class Client(PSTrainer):
         return epoch_data, epoch_label
     
     # TODO: double check its correctness
-    def _sample_shared_data_proportional(self, share_data1, share_data2, share_y, share_data_mode, pos_proportion=0.1):
+    
+    def _sample_shared_data_proportional(self, share_data, share_y,  pos_proportion=0.3):
             '''Instead of balanced sampling as in original FedFed, we used porportional sampling for both positive and negative samples'''
-            share_data = share_data1 if share_data_mode == 1 else share_data2
             target_total = min(self.local_sample_number, len(share_data))
-            
+            print(f"global shared length: {len(share_data)}")
             target_pos = int(target_total * pos_proportion)
-            target_neg = target_total - target_pos
-            
             pos_indices = torch.where(share_y == 1)[0]
-            neg_indices = torch.where(share_y == 0)[0]
-            
             actual_pos = min(target_pos, len(pos_indices))
-            actual_neg = min(target_neg, len(neg_indices))
+
+            actual_neg = target_total - actual_pos
+            neg_indices = torch.where(share_y == 0)[0]
             
             sampled_indices = []
             
@@ -540,79 +527,37 @@ class Client(PSTrainer):
             
             if sampled_indices:
                 all_indices = torch.cat(sampled_indices)
-                return share_data[all_indices], share_y[all_indices]
+                sampled_data = share_data[all_indices]
+                sampled_labels = share_y[all_indices]
+                
+                return sampled_data, sampled_labels
             else:
                 return torch.empty(0, share_data.shape[1]), torch.empty(0, dtype=share_y.dtype)
 
-
-    def construct_mix_dataloader(self, share_data1, share_data2, share_y, share_data_mode=1):
+    def construct_mix_dataloader(self, share_data1, share_y):
         if self.args.dataset == 'eicu':
-            return self._construct_mix_dataloader_medical(share_data1, share_data2, share_y, share_data_mode)
+            return self._construct_mix_dataloader_medical(share_data1, share_y)
         else:
-            # Original image implementation 
-            return self._construct_mix_dataloader_image(share_data1, share_data2, share_y, share_data_mode)
+            raise NotImplementedError("dataset not supported!")
         
         
-    def _construct_mix_dataloader_image(self, share_data1, share_data2, share_y, share_data_mode=1):
-         # two dataloader inclue shared data from server and local origin dataloader
-        train_ori_transform = transforms.Compose([])
-        if self.args.dataset == 'fmnist':
-            train_ori_transform.transforms.append(transforms.Resize(32))
-        train_ori_transform.transforms.append(transforms.RandomCrop(32, padding=4))
-        train_ori_transform.transforms.append(transforms.RandomHorizontalFlip())
-        if self.args.dataset not in ['fmnist']:
-            train_ori_transform.transforms.append(RandAugmentMC(n=3, m=10))
-        train_ori_transform.transforms.append(transforms.ToTensor())
-        # train_ori_transform.transforms.append(transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)))
-
-        train_share_transform = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            #Aug_Cutout(),
-        ])
-        epoch_data1, epoch_label1 = self.sample_iid_data_from_share_dataset(share_data1, share_data2, share_y, share_data_mode=1)
-        epoch_data2, epoch_label2 = self.sample_iid_data_from_share_dataset(share_data1, share_data2, share_y, share_data_mode=2)
-
-        train_dataset = Dataset_3Types_ImageData(self.train_ori_data, epoch_data1,epoch_data2,
-                                                 self.train_ori_targets,epoch_label1,epoch_label2,
-                                                 transform=train_ori_transform,
-                                                 share_transform=train_share_transform)
-        self.local_train_mixed_dataloader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                                                  batch_size=32, shuffle=True,
-                                                                  drop_last=False)
         
-    def _construct_mix_dataloader_medical(self, share_data1, share_data2, share_y, share_data_mode=1):
-        """
-        Constructs 3-types simultaneous training dataloader for medical data following FedFed principles.
-        Uses raw shared data directly, same pattern as image implementation.
-        
-        Training types:
-        1. Original complete features 
-        2. Raw rx_noise1 (shared performance-sensitive features + noise type 1)
-        3. Raw rx_noise2 (shared performance-sensitive features + noise type 2)
-        """
-        from torch.utils.data import DataLoader
-        
-        if share_data1 is not None and share_data2 is not None:
-            # Sample shared rx features (raw noise types 1 & 2) proportionally
+    def _construct_mix_dataloader_medical(self, share_data1, share_y):        
+        if share_data1 is not None:
+            # Sample only rx_noise1 (single xs version)
             rx_noise1_sampled, share_labels1 = self._sample_shared_data_proportional(
-                share_data1, share_data2, share_y, share_data_mode=1
-            )
-            rx_noise2_sampled, share_labels2 = self._sample_shared_data_proportional(
-                share_data1, share_data2, share_y, share_data_mode=2
+                share_data1, share_y
             )
             
             ori_data_tensor = torch.FloatTensor(self.train_ori_data)
             ori_targets_tensor = torch.LongTensor(self.train_ori_targets)
             
-            # Create 3-types dataset using raw shared data directly (no reconstruction)
-            train_dataset = Dataset_3Types_MedicalData(
+            # Create 2-types dataset using raw shared data directly (no reconstruction)
+            train_dataset = Dataset_2Types_MedicalData(
                 ori_data=ori_data_tensor,           # Original features
                 share_data1=rx_noise1_sampled,      # Raw rx_noise1 directly  
-                share_data2=rx_noise2_sampled,      # Raw rx_noise2 directly
                 ori_targets=ori_targets_tensor,     # targets for type 1
-                share_targets1=share_labels1,       # targets for type 2
-                share_targets2=share_labels2        # targets for type 3
+                share_targets1=share_labels1        # targets for type 2
             )
             
             self.local_train_mixed_dataloader = DataLoader(
@@ -622,33 +567,22 @@ class Client(PSTrainer):
                 drop_last=False
             )
             
-            print(f"Medical 3-types FedFed training: original={len(ori_data_tensor)}, "
-                  f"rx_noise1={len(rx_noise1_sampled)}, rx_noise2={len(rx_noise2_sampled)}")
+            print(f"Medical 2-types FedFed training: original={len(ori_data_tensor)}, "
+                  f"rx_noise1={len(rx_noise1_sampled)}")
         else:
-            local_dataset = TensorDataset(
-                torch.FloatTensor(self.train_ori_data),
-                torch.LongTensor(self.train_ori_targets)
-            )
-            self.local_train_mixed_dataloader = DataLoader(
-                local_dataset,
-                batch_size=self.args.batch_size,
-                shuffle=True,
-                drop_last=False
-            )
-            print("No shared data available - using original data only")
+            raise Exception("No data gets shared!")
 
         return self.local_train_mixed_dataloader 
 
 
     
 
-    def get_local_share_data(self, noise_mode):  # noise_mode means get RXnoise2 or RXnoise2
-        if self.local_share_data1 is not None and noise_mode == 1:
-            return self.local_share_data1, self.local_share_data_y
-        elif self.local_share_data2 is not None and noise_mode == 2:
-            return self.local_share_data2, self.local_share_data_y
-        else:
-            raise NotImplementedError
+    def get_local_share_data(self, noise_mode):  # SINGLE XS VERSION: Only noise_mode=1 supported
+        if noise_mode != 1:
+            raise RuntimeError(f"Single XS version: Only noise_mode=1 supported, got {noise_mode}")
+        if self.local_share_data1 is None:
+            raise RuntimeError("No shared data TYPE1 available")
+        return self.local_share_data1, self.local_share_data_y
         
     # ===================================== End of Data Sharing ===========================================
 
@@ -697,7 +631,7 @@ class Client(PSTrainer):
                 if (iterations > 0 and iterations % num_iterations == 0):
                     self.trainer.lr_schedule(epochs)
 
-    def train(self, share_data1, share_data2, share_y,
+    def train(self, share_data1, share_y,
               round_idx, named_params, params_type='model',
               global_other_params=None, shared_params_for_simulation=None):
         '''
@@ -714,7 +648,7 @@ class Client(PSTrainer):
         if self.args.instantiate_all:
             self.move_to_gpu(self.device)
         named_params, params_indexes, local_sample_number, other_client_params, \
-        shared_params_for_simulation = self.algorithm_on_train(share_data1, share_data2, share_y, round_idx,
+        shared_params_for_simulation = self.algorithm_on_train(share_data1, share_y, round_idx,
                                                                named_params, params_type,
                                                                global_other_params,
                                                                shared_params_for_simulation)
@@ -816,7 +750,7 @@ class Client(PSTrainer):
         with torch.no_grad():
             sample_data = sample_data.to(self.device)
             
-            out, hi, xi, mu, logvar, rx, rx_noise1, rx_noise2 = self.vae_model(sample_data)
+            out, hi, xi, mu, logvar, rx, rx_noise1 = self.vae_model(sample_data)
             
             x_original = sample_data.cpu()
             xi_robust = xi.cpu()  
@@ -882,7 +816,7 @@ class Client(PSTrainer):
             logging.info(f"{'='*60}\n")
 
     @abstractmethod
-    def algorithm_on_train(self, share_data1, share_data2, share_y,round_idx, 
+    def algorithm_on_train(self, share_data1, share_y,round_idx, 
                            named_params, params_type='model',
                            global_other_params=None,
                            shared_params_for_simulation=None):

@@ -75,7 +75,7 @@ def extract_train_data_loaders(train_data_local_ori_dict, train_targets_local_or
                 batch_size=batch_size, 
                 shuffle=True, 
                 drop_last=False,
-                num_workers=0
+                num_workers=1
             )
             train_data_loaders.append(client_dataloader)
     
@@ -96,6 +96,12 @@ def main():
     # Load data using existing preprocessing pipeline
     print("\nLoading data using existing preprocessing pipeline...")
     
+    print(f"=== DEBUG: Using consistent parameters with BasePSManager ===")
+    print(f"  num_workers: {getattr(args, 'data_load_num_workers', 1)} (from config vs hardcoded 4)")
+    print(f"  data_sampler: {getattr(args, 'data_sampler', 'random')} (from config vs hardcoded 'random')")
+    print(f"  resize: {getattr(args, 'dataset_load_image_size', 32)} (from config vs hardcoded 32)")
+    print(f"  augmentation: {getattr(args, 'dataset_aug', 'default')} (from config vs hardcoded 'default')")
+    
     train_data_global_num, test_data_global_num, train_data_global_dl, test_data_global_dl, \
     train_data_local_num_dict, test_data_local_num_dict, test_data_local_dl_dict, \
     train_data_local_ori_dict, train_targets_local_ori_dict, class_num, other_params = load_data(
@@ -113,10 +119,10 @@ def main():
         partition_alpha=args.partition_alpha,
         client_number=args.client_num_in_total,
         batch_size=args.batch_size,
-        num_workers=4,
-        data_sampler="random",
-        resize=32,
-        augmentation="default"
+        num_workers=getattr(args, 'data_load_num_workers', 1),  # FIXED: Use config value
+        data_sampler=getattr(args, 'data_sampler', 'random'),   # FIXED: Use config value
+        resize=getattr(args, 'dataset_load_image_size', 32),    # FIXED: Use config value
+        augmentation=getattr(args, 'dataset_aug', 'default')    # FIXED: Use config value
     )
     
     print(f"Data loaded successfully:")
@@ -141,11 +147,29 @@ def main():
     
     comparison_evaluator = ComparisonEvaluator(args, device)
     
+    # Prepare existing data for FedFed consistency
+    existing_data = {
+        'train_data_local_ori_dict': train_data_local_ori_dict,
+        'train_targets_local_ori_dict': train_targets_local_ori_dict,
+        'train_data_local_num_dict': train_data_local_num_dict,
+        'test_data_local_num_dict': test_data_local_num_dict,
+        'test_data_local_dl_dict': test_data_local_dl_dict,
+        'train_data_global_num': train_data_global_num,
+        'test_data_global_num': test_data_global_num,
+        'train_data_global_dl': train_data_global_dl,
+        'test_data_global_dl': test_data_global_dl,
+        'class_num': class_num,
+        'client_dataidx_map': other_params.get('client_dataidx_map', {}),
+        'train_cls_local_counts_dict': other_params.get('train_cls_local_counts_dict', {}),
+        'other_params': other_params
+    }
+    
     try:
         results, trained_models = comparison_evaluator.run_complete_comparison(
             train_data_loaders,
             target_hospital_data,
-            args.target_hospital_id
+            args.target_hospital_id,
+            existing_data
         )
         
         print(f"\nComparison completed!")

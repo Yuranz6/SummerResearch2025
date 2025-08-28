@@ -203,7 +203,7 @@ class NormalTrainer(object):
         if self.args.dataset != 'eicu': # part below is adapted for medical only, img data not adapted
           raise NotImplementedError
 
-        logging.info('\n=> Training Epoch #%d, LR=%.4f' % (epoch, self.optimizer.param_groups[0]['lr']))
+        # logging.info('\n=> Training Epoch #%d, LR=%.4f' % (epoch, self.optimizer.param_groups[0]['lr']))
         for batch_idx, (x, y) in enumerate(trainloader):
             x, y = x.to(device), y.to(device)
             batch_size = x.size(0)
@@ -223,7 +223,7 @@ class NormalTrainer(object):
                 previous_model = kwargs["previous_model"]
                 
                 for name, param in self.model.named_parameters():
-                    prev_param = previous_model[name].data.to(device)
+                    prev_param = previous_model[name].data.to(device)  
                     param_diff_squared = torch.norm(param - prev_param, p=2)**2  # L2 norm squared
                     fed_prox_reg += (self.args.fedprox_mu / 2) * param_diff_squared
                 
@@ -246,71 +246,6 @@ class NormalTrainer(object):
                 logging.info('| Epoch [%3d] Iter[%3d/%3d]\t\tLoss: %.4f Acc@1: %.3f%%' %
                             (epoch, batch_idx + 1, len(trainloader), loss_avg.avg, acc.avg))
 
-    def _train_mix_dataloader_image(self, epoch, trainloader, device, **kwargs):
-        self.model.to(device)
-        self.model.train()
-        self.model.training =True
-
-        loss_avg = AverageMeter()
-        acc = AverageMeter()
-
-        logging.info('\n=> Training Epoch #%d, LR=%.4f' % (epoch, self.optimizer.param_groups[0]['lr']))
-        for batch_idx, (x1, x2,x3, y1, y2,y3) in enumerate(trainloader):
-            x1, x2, x3, y1, y2,y3 = x1.to(device), x2.to(device), x3.to(device), \
-                                    y1.to(device), y2.to(device), y3.to(device)
-
-            batch_size = x1.size(0)
-            self.optimizer.zero_grad()
-
-            x = torch.cat((x1, x2,x3))
-            y = torch.cat((y1,y2,y3))
-
-            out = self.model(x)
-
-            loss = self.criterion(out, y)
-
-            # ========================FedProx=====================#
-            if self.args.fedprox:
-                fed_prox_reg = 0.0
-                previous_model = kwargs["previous_model"]
-                for name, param in self.model.named_parameters():
-                    fed_prox_reg += ((self.args.fedprox_mu / 2) * \
-                        torch.norm((param - previous_model[name].data.to(device)))**2)
-                loss += fed_prox_reg
-            # ========================FedProx=====================#
-
-            loss.backward()
-            self.optimizer.step()
-
-            # ========================SCAFFOLD=====================#
-            if self.args.scaffold:
-                c_model_global = kwargs['c_model_global']
-                c_model_local = kwargs['c_model_local']
-                if self.lr_scheduler is not None:
-                    current_lr = self.lr_scheduler.lr
-                else:
-                    current_lr = self.args.lr
-                for name, param in self.model.named_parameters():
-                    # logging.debug(f"c_model_global[name].device : {c_model_global[name].device}, \
-                    #     c_model_local[name].device : {c_model_local[name].device}")
-                    param.data = param.data - 0.000001 * \
-                                 check_device((c_model_global[name] - c_model_local[name]), param.data.device)
-            # ========================SCAFFOLD=====================#
-
-            prec1, prec5, correct, pred, _ = accuracy(out.data, y.data, topk=(1, 5))
-
-            loss_avg.update(loss.data.item(), batch_size)
-            acc.update(prec1.data.item(), batch_size)
-
-            n_iter = (epoch - 1) * len(trainloader) + batch_idx
-
-            log_info('scalar', '{role}_{index}_train_loss_epoch {epoch}'.format(role=self.role, index=self.index, epoch=epoch),
-                     loss_avg.avg,step=n_iter,record_tool=self.args.record_tool, 
-                        wandb_record=self.args.wandb_record)
-            log_info('scalar', '{role}_{index}_train_acc_epoch {epoch}'.format(role=self.role, index=self.index, epoch=epoch),
-                     acc.avg,step=n_iter,record_tool=self.args.record_tool,
-                     wandb_record=self.args.wandb_record)
-            return loss_avg.avg
 
     def _train_mix_dataloader_medical(self, epoch, trainloader, device, **kwargs):
        
@@ -320,11 +255,19 @@ class NormalTrainer(object):
         loss_avg = AverageMeter()
         acc = AverageMeter()
         
-        logging.info('\n=> Training Epoch #%d, LR=%.4f' % 
-                    (epoch, self.optimizer.param_groups[0]['lr']))
+        # logging.info('\n=> Training Epoch #%d, LR=%.4f' % 
+        #             (epoch, self.optimizer.param_groups[0]['lr']))
         
         for batch_idx, batch_data in enumerate(trainloader):
-            if len(batch_data) == 6: # with paired augmentation
+            if len(batch_data) == 4: # SINGLE XS VERSION - 2-types augmentation
+                x1, x2, y1, y2 = batch_data
+                x1, x2, y1, y2 = x1.to(device), x2.to(device), y1.to(device), y2.to(device)
+                
+                X = torch.cat((x1, x2))  # Only original + rx_noise1
+                y = torch.cat((y1, y2))
+                batch_size = x1.size(0)  
+                
+            elif len(batch_data) == 6: # 3-types augmentation (backward compatibility)
                 x1, x2, x3, y1, y2, y3 = batch_data
                 x1, x2, x3, y1, y2, y3 = x1.to(device), x2.to(device), x3.to(device), \
                                         y1.to(device), y2.to(device), y3.to(device)
@@ -351,14 +294,14 @@ class NormalTrainer(object):
             loss = self.criterion(out, y.float())
             
             # FedProx regularization
-            if self.args.fedprox:
-                fed_prox_reg = 0.0
-                previous_model = kwargs.get("previous_model", {})
-                for name, param in self.model.named_parameters():
-                    if name in previous_model:
-                        fed_prox_reg += ((self.args.fedprox_mu / 2) * 
-                                        torch.norm((param - previous_model[name].data.to(device)))**2)
-                loss += fed_prox_reg
+            # if self.args.fedprox:
+            #     fed_prox_reg = 0.0
+            #     previous_model = kwargs.get("previous_model", {})
+            #     for name, param in self.model.named_parameters():
+            #         if name in previous_model:
+            #             fed_prox_reg += ((self.args.fedprox_mu / 2) * 
+            #                             torch.norm((param - previous_model[name].data.to(device)))**2)
+            #     loss += fed_prox_reg
             
             loss.backward()
             self.optimizer.step()

@@ -1,6 +1,6 @@
 dataset: "eicu"
 data_dir: "./data"
-medical_task: "death" # Options: 'death', 'ventilation', 'sepsis'
+medical_task: "death"
 
 # Model config
 model: "medical_mlp"
@@ -8,27 +8,26 @@ model_output_dim: 1
 model_input_channels: 1
 num_classes: 2
 
-VAE_input_dim: 256 # need double check
+VAE_input_dim: 256
 dropout_rate: 0.2
 use_batch_norm: True
 
 # FL configuration
 algorithm: "FedAvg"
-client_num_in_total: 9
+client_num_in_total: 10
 client_num_per_round: 5
-comm_round: 100
-global_epochs_per_round: 2
+comm_round: 50
+global_epochs_per_round: 1
 partition_method: "hospital"
-partition_alpha: 0.1 # Not used for hospital partition
+partition_alpha: 0.1
 
+# FedFed - YES VAE, NO FedProx
 fedprox: False
-fedprox_mu: 0.005
-
+VAE: True
 
 # VAE configuration
-VAE: True
 VAE_comm_round: 10
-VAE_client_num_per_round: 9
+VAE_client_num_per_round: 10
 VAE_local_epoch: 2
 
 # VAE loss weights
@@ -38,32 +37,29 @@ VAE_kl: 0.005
 VAE_x_ce: 0.5
 
 # VAE architecture
-VAE_d: 128 # Hidden dimension
-VAE_z: 16 # Latent dimension
+VAE_d: 64
+VAE_z: 8
 
-# Noise parameters (DP protection)
+# Noise parameters
 VAE_mean: 0.0
 VAE_std1: 0.0
 VAE_std2: 0.005
 noise_type: "Gaussian"
 
-batch_size: 64
 VAE_batch_size: 64
-lr: 0.001
 VAE_loss: "focal"
-seed: 42
-
-# Medical-specific settings
 VAE_curriculum: False
 VAE_adaptive: True
-VAE_mixupdata: False # Disable mixup for tabular
-VAE_alpha: 0.0 # No mixup
+VAE_mixupdata: False
+VAE_alpha: 0.0
 VAE_aug_batch_size: 64
+VAE_target_pos_ratio: 0.15
 
-# VAE balanced training (VERY IMPORTANT!)
-VAE_target_pos_ratio: 0.3
+batch_size: 64
+lr: 0.001
+seed: 42
 
-# Feature extraction for visualization
+# Feature extraction
 extract_features: true
 
 # Other settings
@@ -76,21 +72,18 @@ gpu_index: 0
 instantiate_all: True
 test: True
 
+# Evaluation settings
 unseen_hospital_test: True
-# the target hospital must be in selected hospital list!
-target_hospital_id: 458
-
+target_hospital_id: 167
 run_bootstrap_evaluation: True
-bootstrap_seeds: 100
-eval_test_size: 0.75
-eval_val_size: 0.25 
+bootstrap_seeds: 20
+eval_test_size: 0.5
+eval_val_size: 0.5 
 eval_metric: "auprc"
 
 target_hospital_list: [167, 420, 199, 458, 252, 165, 148, 281, 449, 283] 
 auto_select_hospitals: True  
 
-eval_algorithms: ["fedfed", "fedprox", "fedavg"] 
-
 # Output settings
 output_path: "./output/evaluation_results"
-create_evaluation_plots: True 
+create_evaluation_plots: True

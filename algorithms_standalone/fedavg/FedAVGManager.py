@@ -12,8 +12,8 @@ from trainers.build import create_trainer
 from model.FL_VAE import *
 
 class FedAVGManager(BasePSManager):
-    def __init__(self, device, args):
-        super().__init__(device, args)
+    def __init__(self, device, args, injected_data=None):
+        super().__init__(device, args, injected_data)
 
         self.global_epochs_per_round = self.args.global_epochs_per_round
 
@@ -129,7 +129,7 @@ class FedAVGManager(BasePSManager):
                    '''
             model_params, model_indexes, local_sample_number, client_other_params, \
              shared_params_for_simulation = \
-                    client.train(self.global_share_dataset1,self.global_share_dataset2, self.global_share_data_y,
+                    client.train(self.global_share_dataset1, self.global_share_data_y,
                                  round_idx, copy_named_model_params, params_type,
                                  copy_global_other_params,
                                  shared_params_for_simulation=shared_params_for_simulation)

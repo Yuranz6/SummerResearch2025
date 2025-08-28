@@ -233,7 +233,7 @@ def _train_classifier(train_data, train_labels, epochs, lr, hidden_dims, dropout
     # Create dataset and dataloader
     dataset = TensorDataset(train_data, train_labels)
     generator = torch.Generator().manual_seed(seed)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, generator=generator)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, generator=generator, num_workers=1)
     
     # Initialize classifier
     input_dim = train_data.shape[1]

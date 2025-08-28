@@ -21,9 +21,6 @@ def create_model(args, model_name, output_dim, pretrained=False, device=None, **
     """
     Create model based on model_name and dataset type
     
-    This function maintains the exact interface from the original implementation
-    while adding support for medical models for tabular federated learning.
-    
     Args:
         args: Configuration arguments containing dataset and model parameters
         model_name: String identifier for model type
@@ -77,12 +74,8 @@ def _create_medical_model(args, model_name, output_dim, device, **kwargs):
     if model_name == "medical_mlp" or args.dataset == 'eicu':
         logging.info(f"Creating Medical_MLP_Classifier: input_dim={input_dim}, output_dim={output_dim}")
         
-        if input_dim >= 256:
-            hidden_dims = [128, 64]
-        elif input_dim >= 128:
-            hidden_dims = [64, 32]
-        else:
-            hidden_dims = [32, 16]
+        hidden_dims = [256, 256]
+          
         
         model = Medical_MLP_Classifier(
             input_dim=input_dim,

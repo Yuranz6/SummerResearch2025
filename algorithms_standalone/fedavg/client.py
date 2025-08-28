@@ -45,7 +45,7 @@ class FedAVGClient(Client):
         acc_avg = self.trainer.test(epoch, self.test_dataloader, self.device)
         return acc_avg
 
-    def fedavg_train(self, share_data1, share_data2, share_y,round_idx=None, global_other_params=None, 
+    def fedavg_train(self, share_data1, share_y,round_idx=None, global_other_params=None, 
                     shared_params_for_simulation=None,
                      **kwargs):
 
@@ -72,15 +72,12 @@ class FedAVGClient(Client):
             train_kwargs['c_model_local'] = c_model_local
         # ========================SCAFFOLD=====================#
 
-        share_data_mode = (round_idx % 2) + 1 if round_idx is not None else 1
-        
-        
         
         for epoch in range(self.args.global_epochs_per_round):
             # can lr_schedule be used for medical?
             # self.lr_schedule(self.local_num_iterations, self.args.warmup_epochs)
             mixed_dataloader = self.construct_mix_dataloader(
-            share_data1, share_data2, share_y, share_data_mode=share_data_mode)    
+            share_data1, share_y)    
             avg_loss = self.trainer.train_mix_dataloader(
                 epoch, mixed_dataloader, self.device, **train_kwargs
             )
@@ -124,7 +121,7 @@ class FedAVGClient(Client):
 
 
         
-    def algorithm_on_train(self, share_data1, share_data2, share_y,round_idx,
+    def algorithm_on_train(self, share_data1, share_y,round_idx,
             named_params, params_type='model',
             global_other_params=None,
             shared_params_for_simulation=None):
@@ -133,7 +130,7 @@ class FedAVGClient(Client):
             self.set_model_params(named_params)
 
         model_params, model_indexes, local_sample_number, client_other_params, shared_params_for_simulation = self.fedavg_train(
-                share_data1, share_data2, share_y,
+                share_data1, share_y,
                 round_idx,
                 global_other_params,
                 shared_params_for_simulation)

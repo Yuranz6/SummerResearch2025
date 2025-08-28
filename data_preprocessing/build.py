@@ -15,7 +15,7 @@ from .loader import Data_Loader
 # got it
 def load_data(load_as, args=None, process_id=0, mode="standalone", task="federated", data_efficient_load=True,
                 dirichlet_balance=False, dirichlet_min_p=None,
-                dataset="", datadir="./", partition_method="hetero", partition_alpha=0.1, client_number=1, batch_size=128, num_workers=4,
+                dataset="", datadir="./", partition_method="hetero", partition_alpha=0.1, client_number=1, batch_size=128, num_workers=1,
                 data_sampler=None,
                 resize=32, augmentation="default"):
     '''

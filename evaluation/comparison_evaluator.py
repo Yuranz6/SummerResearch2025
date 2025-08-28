@@ -6,7 +6,6 @@ import numpy as np
 from evaluation.fedavg_evaluator import FedAvgEvaluator
 from evaluation.fedprox_evaluator import FedProxEvaluator
 from evaluation.fedfed_evaluator import FedFedEvaluator
-from evaluation.bootstrap_evaluator import BootstrapEvaluator
 
 class ComparisonEvaluator:
     """
@@ -26,7 +25,7 @@ class ComparisonEvaluator:
         self.output_path = getattr(args, 'output_path', '../output/evaluation_results/')
         os.makedirs(self.output_path, exist_ok=True)
         
-    def run_complete_comparison(self, train_data_loaders, target_hospital_data, target_hospital_id):
+    def run_complete_comparison(self, train_data_loaders, target_hospital_data, target_hospital_id, existing_data=None):
         """
         Run complete comparison evaluation across all algorithms
         Train each algorithm and perform bootstrap evaluation
@@ -51,7 +50,7 @@ class ComparisonEvaluator:
                     
                 elif algorithm.lower() == 'fedfed':
                     model, eval_results = self.fedfed_evaluator.run_complete_evaluation(
-                        train_data_loaders, target_hospital_data, target_hospital_id
+                        train_data_loaders, target_hospital_data, target_hospital_id, existing_data
                     )
                     
                 else:

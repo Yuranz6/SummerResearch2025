@@ -13,9 +13,7 @@ sys.path.insert(0, os.path.abspath('.'))
 from evaluation.visualization import Visualization
 
 def main():
-    """
-    Create grouped box plot comparing algorithms across multiple target hospitals
-    """
+    
     
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     

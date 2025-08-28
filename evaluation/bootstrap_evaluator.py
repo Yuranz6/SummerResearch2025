@@ -25,10 +25,7 @@ class BootstrapEvaluator:
         os.makedirs(self.output_path, exist_ok=True)
         
     def prepare_target_hospital_data(self, x_target, y_target, seed=42):
-        """
-        Prepare target hospital data following FedWeight's exact approach
-        Split into train/val and bootstrap test pool
-        """
+       
         if isinstance(x_target, torch.Tensor):
             x_target = x_target.cpu().numpy()
         if isinstance(y_target, torch.Tensor):
@@ -59,9 +56,9 @@ class BootstrapEvaluator:
             'auprc': [],
             'f1_score': []
         }
-        
-        x_non_train = target_data['x_target_non_train']
-        y_non_train = target_data['y_target_non_train']
+        # for now using the entire target hos data for eval
+        x_non_train = target_data['x_target_train']
+        y_non_train = target_data['y_target_train']
         
         with torch.no_grad():
             for seed_idx in range(self.bootstrap_seeds):
@@ -108,7 +105,7 @@ class BootstrapEvaluator:
         for metric in bootstrap_results:
             values = np.array(bootstrap_results[metric])
             # Remove NaN values
-            valid_values = values[~np.isnan(values)]
+            valid_values = values # [~np.isnan(values)]
             
             processed_results[metric] = {
                 'raw_values': values.tolist(),

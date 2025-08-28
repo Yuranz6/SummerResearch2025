@@ -54,15 +54,15 @@ def load_iid_cifar10(dataset, data_dir, partition_method,
 
 
         train_data_global = data.DataLoader(train_dataset, batch_size=batch_size,
-                                    shuffle=shuffle, num_workers=4)
+                                    shuffle=shuffle, num_workers=1)
         test_data_global = data.DataLoader(test_dataset, batch_size=batch_size,
-                                    shuffle=False, num_workers=4)
+                                    shuffle=False, num_workers=1)
 
         train_sampler = train_sampler
         train_dl = data.DataLoader(train_dataset, batch_size=batch_size,
-                                    shuffle=shuffle, num_workers=4, sampler=train_sampler)
+                                    shuffle=shuffle, num_workers=1, sampler=train_sampler)
         test_dl = data.DataLoader(test_dataset, batch_size=batch_size,
-                                    shuffle=False, num_workers=4)
+                                    shuffle=False, num_workers=1)
         # classes = ('plane', 'car', 'bird', 'cat',
         #         'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
@@ -101,15 +101,15 @@ def load_iid_cifar10(dataset, data_dir, partition_method,
 
 
             train_data_global = data.DataLoader(train_dataset, batch_size=batch_size,
-                                        shuffle=shuffle, num_workers=4)
+                                        shuffle=shuffle, num_workers=1)
             test_data_global = data.DataLoader(test_dataset, batch_size=batch_size,
-                                        shuffle=False, num_workers=4)
+                                        shuffle=False, num_workers=1)
 
             train_sampler = train_sampler
             train_dl = data.DataLoader(train_dataset, batch_size=batch_size,
-                                        shuffle=shuffle, num_workers=4, sampler=train_sampler)
+                                        shuffle=shuffle, num_workers=1, sampler=train_sampler)
             test_dl = data.DataLoader(test_dataset, batch_size=batch_size,
-                                        shuffle=False, num_workers=4)
+                                        shuffle=False, num_workers=1)
             # classes = ('plane', 'car', 'bird', 'cat',
             #         'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 

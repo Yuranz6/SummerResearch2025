@@ -311,7 +311,7 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
             nn.Linear(self.input_dim, self.hidden_dim * 2),
             nn.BatchNorm1d(self.hidden_dim * 2),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.3),  # Increased dropout for sparsity
+            nn.Dropout(0.2),  # Increased dropout for sparsity
             
             nn.Linear(self.hidden_dim * 2, self.hidden_dim),
             nn.BatchNorm1d(self.hidden_dim),
@@ -346,7 +346,6 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
         # Final layers - no sigmoid constraint for medical sparse data
         self.decoder_last = nn.Linear(self.hidden_dim * 2, self.input_dim)
         self.xi_bn = nn.BatchNorm1d(self.input_dim)
-        # Remove sigmoid activation - let VAE learn sparse patterns naturally
         
         # VAE latent space projections
         self.fc11 = nn.Linear(self.hidden_dim, self.latent_dim)  # mu
@@ -361,7 +360,7 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
             self.classifier = Medical_MLP_Classifier(
                 input_dim=self.input_dim,
                 num_classes=getattr(args, 'model_output_dim', 1),  # Binary by default
-                hidden_dims=[self.hidden_dim, self.hidden_dim // 2],
+                hidden_dims=[self.hidden_dim, self.hidden_dim//2],
                 dropout_rate=0.2,
                 use_batch_norm=True
             )
@@ -400,9 +399,9 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
     
     def forward(self, x):
         """
-        Forward pass implementing FedFed feature distillation
+        Forward pass implementing FedFed feature distillation - SINGLE XS VERSION
         
-        Returns: (out, hi, xi, mu, logvar, rx, rx_noise1, rx_noise2)
+        Returns: (out, hi, xi, mu, logvar, rx, rx_noise1)
         """
         x_no_normalize = x
         bn_x = x  # For tabular data, x is already normalized
@@ -425,12 +424,11 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
             
             size = rx.shape
             rx_noise1 = self._add_noise(torch.clone(rx), size, self.noise_mean, self.noise_std1)
-            rx_noise2 = self._add_noise(torch.clone(rx), size, self.noise_mean, self.noise_std2)
             
-            data = torch.cat((rx_noise1, rx_noise2, bn_x), dim=0)
+            data = torch.cat((rx_noise1, bn_x), dim=0)  # Only concat rx_noise1 + original
             out = self.classifier(data)
             
-            return out, hi, xi, mu, logvar, rx, rx_noise1, rx_noise2
+            return out, hi, xi, mu, logvar, rx, rx_noise1  # 7-element tuple instead of 8 (ISSUE: NOT DURING VAE training!)
         else:
             return xi
     

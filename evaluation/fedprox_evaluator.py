@@ -28,31 +28,35 @@ class FedProxEvaluator:
         
         global_params = global_model.state_dict()
         
+        local_models = []
+        model_trainers = []
+        for client_idx, train_loader in enumerate(train_data_loaders):
+            local_model = create_model(
+                self.args,
+                model_name=self.args.model,
+                output_dim=self.args.model_output_dim,
+                device=self.device
+            )
+            local_models.append(local_model)
+            
+            model_trainer = create_trainer(
+                self.args, self.device, local_model,
+                class_num=2,  
+                client_index=client_idx, role='client'
+            )
+            model_trainers.append(model_trainer)
+        
         for round_idx in range(self.args.comm_round):
             logging.info(f"FedProx Round {round_idx + 1}/{self.args.comm_round}")
             
-            # previous global params
             previous_global_params = copy.deepcopy(global_params)
             
             client_params_list = []
             client_weights = []
             # local training for each client
-            for client_idx, train_loader in enumerate(train_data_loaders):
-                local_model = create_model(
-                    self.args,
-                    model_name=self.args.model,
-                    output_dim=self.args.model_output_dim,
-                    device=self.device
-                )
+            for client_idx, (train_loader, local_model, model_trainer) in enumerate(zip(train_data_loaders, local_models, model_trainers)):
                 local_model.load_state_dict(copy.deepcopy(global_params))
                 
-                model_trainer = create_trainer(
-                    self.args, self.device, local_model,
-                    class_num=2,  
-                    client_index=client_idx, role='client'
-                )
-                
-                # Enable FedProx and set mu parameter
                 original_fedprox = getattr(self.args, 'fedprox', False)
                 self.args.fedprox = True
                 self.args.fedprox_mu = self.fedprox_mu
@@ -64,7 +68,6 @@ class FedProxEvaluator:
                         previous_model=previous_global_params  # for FedProx proximal term
                     )
                 
-                # Restore original FedProx setting
                 self.args.fedprox = original_fedprox
                 
                 local_params = local_model.state_dict()
@@ -84,7 +87,6 @@ class FedProxEvaluator:
                 )
                 logging.info(f"FedProx Round {round_idx + 1} Validation - AUPRC: {val_metrics['auprc']:.4f}")
         
-        logging.info("FedProx training completed")
         return global_model
     
     def _fedavg_aggregate(self, client_params_list, client_weights):
@@ -96,19 +98,16 @@ class FedProxEvaluator:
         aggregated_params = {}
         
         param_names = client_params_list[0].keys()
-        
-        # Weighted averaging
+         # should be correct
         for param_name in param_names:
-            # Skip num_batches_tracked as it should not be averaged
-            if 'num_batches_tracked' in param_name:
-                # Just use the first client's value for tracking parameters
-                aggregated_params[param_name] = client_params_list[0][param_name].clone()
-                continue
-                
             aggregated_params[param_name] = torch.zeros_like(client_params_list[0][param_name])
             
-            for client_params, weight in zip(client_params_list, client_weights):
-                aggregated_params[param_name] += (weight / total_weight) * client_params[param_name]
+            for i, (client_params, weight) in enumerate(zip(client_params_list, client_weights)):
+                factor = weight / total_weight
+                if i == 0:
+                    aggregated_params[param_name] = (client_params[param_name] * factor).type(aggregated_params[param_name].dtype)
+                else:
+                    aggregated_params[param_name] += (client_params[param_name].to(aggregated_params[param_name].device)*factor).type(aggregated_params[param_name].dtype)
         
         return aggregated_params
     

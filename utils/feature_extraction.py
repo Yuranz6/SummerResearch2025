@@ -84,8 +84,8 @@ class FeatureExtractor:
                 x = x.to(client.device)
                 y = y.to(client.device)
                 
-                # Forward pass through VAE
-                out, hi, xi, mu, logvar, rx, rx_noise1, rx_noise2 = client.vae_model(x)
+                # Forward pass through VAE - SINGLE XS VERSION
+                out, hi, xi, mu, logvar, rx, rx_noise1 = client.vae_model(x)
                 
                 # Move to CPU and convert to numpy
                 x_np = x.cpu().numpy()

@@ -85,7 +85,7 @@ class Data_Loader(object):
 
     def __init__(self, args=None, process_id=0, mode="centralized", task="centralized",
                 data_efficient_load=True, dirichlet_balance=False, dirichlet_min_p=None,
-                dataset="", datadir="./", partition_method="hetero", partition_alpha=0.5, client_number=1, batch_size=128, num_workers=4,
+                dataset="", datadir="./", partition_method="hetero", partition_alpha=0.5, client_number=1, batch_size=128, num_workers=1,
                 data_sampler=None,
                 resize=32, augmentation="default", other_params={}):
 

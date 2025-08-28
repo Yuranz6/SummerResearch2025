@@ -354,3 +354,44 @@ class Dataset_3Types_MedicalData(data.Dataset):
                              f"share1: {len(self.share_data1)}, share2: {len(self.share_data2)}")
 
 
+class Dataset_2Types_MedicalData(data.Dataset):
+    """
+    Dataset for FedFed medical tabular data with 2-types simultaneous training.
+    Returns original features and single noisy rx features (type 1) only
+    along with their corresponding targets for simultaneous training.
+    """
+
+    def __init__(self, ori_data, share_data1, ori_targets, share_targets1):
+        """
+        Args:
+            ori_data: Original local tabular data (tensor)
+            share_data1: Shared rx features with noise type 1 (tensor) 
+            ori_targets: Original targets (tensor)
+            share_targets1: Targets for shared data type 1 (tensor)
+        """
+        self.ori_data = ori_data
+        self.share_data1 = share_data1
+        self.ori_targets = ori_targets
+        self.share_targets1 = share_targets1
+
+    def __getitem__(self, index):
+        """
+        Returns:
+            tuple: (original_features, rx_noise1, target1, target2)
+                   for simultaneous training on 2 types
+        """
+        ori_features = self.ori_data[index]
+        share_features1 = self.share_data1[index] 
+        target1 = self.ori_targets[index]
+        target2 = self.share_targets1[index] 
+
+        return ori_features, share_features1, target1, target2
+
+    def __len__(self):
+        if len(self.ori_data) == len(self.share_data1):
+            return len(self.ori_data)
+        else:
+            raise RuntimeError(f"Data length mismatch - ori: {len(self.ori_data)}, "
+                             f"share1: {len(self.share_data1)}")
+
+

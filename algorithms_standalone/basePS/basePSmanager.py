@@ -3,6 +3,7 @@ from abc import  abstractmethod
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
 
 from model.build import create_model
 from utils.data_utils import (
@@ -21,11 +22,14 @@ from evaluation.cross_hospital_generalization import test_cross_hospital_general
 
 
 class BasePSManager(object):
-    def __init__(self, device, args):
+    def __init__(self, device, args, injected_data=None):
         self.device = device
         self.args = args
         # ================================================
-        self._setup_datasets()
+        if injected_data is not None:
+            self._inject_datasets(injected_data)
+        else:
+            self._setup_datasets()
 
         self.selected_clients = None
         self.client_list = []
@@ -72,13 +76,36 @@ class BasePSManager(object):
         self.train_cls_local_counts_dict = other_params['train_cls_local_counts_dict']
 
         self.class_num = class_num
+    
+    def _inject_datasets(self, injected_data):
+        """Inject pre-loaded data to avoid duplicate load_data() calls"""
+        self.train_data_local_ori_dict = injected_data['train_data_local_ori_dict']
+        self.train_targets_local_ori_dict = injected_data['train_targets_local_ori_dict']
+        self.train_data_local_num_dict = injected_data['train_data_local_num_dict']
+        self.test_data_local_num_dict = injected_data.get('test_data_local_num_dict', {})
+        self.test_data_local_dl_dict = injected_data.get('test_data_local_dl_dict', {})
+        self.train_cls_local_counts_dict = injected_data['train_cls_local_counts_dict']
+        
+        self.train_data_global_num = injected_data['train_data_global_num']
+        self.test_data_global_num = injected_data.get('test_data_global_num', 0)
+        self.train_data_global_dl = injected_data.get('train_data_global_dl', None)
+        self.test_data_global_dl = injected_data.get('test_data_global_dl', None)
+        
+        self.class_num = injected_data.get('class_num', 2)
+        self.client_dataidx_map = injected_data['client_dataidx_map']
+        self.other_params = injected_data.get('other_params', {
+            'client_dataidx_map': self.client_dataidx_map,
+            'train_cls_local_counts_dict': self.train_cls_local_counts_dict
+        })
 
+        self._fix_class_counts()
+    
+    def _fix_class_counts(self):
+        """Ensure all clients have entries for all classes"""
         if "train_cls_local_counts_dict" in self.other_params:
-            self.train_cls_local_counts_dict = self.other_params["train_cls_local_counts_dict"]  # {client_idx:{label0: labe0_num_client_idx,...,label9: labe9_num_client_idx}}
-            # Adding missing classes to list
-            classes = list(range(self.class_num)) # [0,1,2,3,4,...,class_num - 1]
+            self.train_cls_local_counts_dict = self.other_params["train_cls_local_counts_dict"]
+            classes = list(range(self.class_num))
             for key in self.train_cls_local_counts_dict:
-                # key means the client index
                 if len(classes) != len(self.train_cls_local_counts_dict[key]):
                     add_classes = set(classes) - set(self.train_cls_local_counts_dict[key])
                     for e in add_classes:
@@ -150,20 +177,20 @@ class BasePSManager(object):
             client.set_vae_para(averaged_vae_params)
 
     def _get_local_shared_data(self):
-        # in test step using two types shared data
+        print(f"[DEBUG] Starting global concatenation with {len(self.client_list)} clients")
         for client_idx in range(len(self.client_list)):
             client_data1, data_y = self.client_list[client_idx].get_local_share_data(noise_mode=1)
-            client_data2, _ = self.client_list[client_idx].get_local_share_data(noise_mode=2)
+            # No longer request noise_mode=2 for single xs version
 
             if client_idx == 0:
                 self.global_share_dataset1 = client_data1
-                self.global_share_dataset2 = client_data2
+                self.global_share_dataset2 = None  # Single xs version - no second noise type
                 self.global_share_data_y = data_y
             else:
                 self.global_share_dataset1 = torch.cat((self.global_share_dataset1, client_data1))
-                self.global_share_dataset2 = torch.cat((self.global_share_dataset2, client_data2))
+                # No concatenation for dataset2 in single xs version
                 self.global_share_data_y = torch.cat((self.global_share_data_y, data_y))
-
+        print(f"[DEBUG] Client {client_idx}: Contributing {client_data1.shape} features") 
 # ================================= PHASE 1.5: Post VAE Experiments =================================
 
     def test(self):

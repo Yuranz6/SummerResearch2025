@@ -172,11 +172,11 @@ def load_partition_eicu_medical(dataset, data_dir, partition_method, partition_a
     # Create global data loaders
     train_data_global = data.DataLoader(
         train_dataset, batch_size=batch_size, 
-        shuffle=True, drop_last=False
+        shuffle=True, drop_last=False, num_workers=1
     )
     test_data_global = data.DataLoader(
         test_dataset, batch_size=batch_size,
-        shuffle=False, drop_last=False
+        shuffle=False, drop_last=False, num_workers=1
     )
     
     train_data_local_num_dict = {}

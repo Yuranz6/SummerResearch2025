@@ -17,15 +17,8 @@ class Medical_MLP_Classifier(nn.Module):
     """
     
     def __init__(self, input_dim=256, num_classes=1, hidden_dims=[128, 64], 
-                 dropout_rate=0.2, use_batch_norm=True):
-        """
-        Args:
-            input_dim: Number of input features (256 for eICU after preprocessing)
-            num_classes: Number of output classes (1 for binary classification)
-            hidden_dims: List of hidden layer dimensions
-            dropout_rate: Dropout probability for regularization
-            use_batch_norm: Whether to use batch normalization
-        """
+                 dropout_rate=0.2, use_batch_norm=False):
+        
         super(Medical_MLP_Classifier, self).__init__()
         
         self.input_dim = input_dim
@@ -61,10 +54,7 @@ class Medical_MLP_Classifier(nn.Module):
                     f"dropout_rate={dropout_rate}")
     
     def _initialize_weights(self):
-        """
-        Initialize network weights using Xavier initialization
-    
-        """
+
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 # Xavier uniform initialization for linear layers

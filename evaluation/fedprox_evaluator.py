@@ -78,14 +78,6 @@ class FedProxEvaluator:
             
             global_model.load_state_dict(global_params)
             
-            if validation_data is not None and (round_idx + 1) % 10 == 0:
-                val_metrics = MedicalMetrics.evaluate_model(
-                    global_model,
-                    validation_data['x_target_val'],
-                    validation_data['y_target_val'],
-                    self.device
-                )
-                logging.info(f"FedProx Round {round_idx + 1} Validation - AUPRC: {val_metrics['auprc']:.4f}")
         
         return global_model
     

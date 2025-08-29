@@ -29,13 +29,13 @@ fedprox_mu: 0.005
 VAE: True
 VAE_comm_round: 10
 VAE_client_num_per_round: 9
-VAE_local_epoch: 2
+VAE_local_epoch: 3
 
 # VAE loss weights
 VAE_re: 4.0
-VAE_ce: 3.0
+VAE_ce: 2.0
 VAE_kl: 0.005
-VAE_x_ce: 0.5
+VAE_x_ce: 0.5 
 
 # VAE architecture
 VAE_d: 128 # Hidden dimension
@@ -61,7 +61,7 @@ VAE_alpha: 0.0 # No mixup
 VAE_aug_batch_size: 64
 
 # VAE balanced training (VERY IMPORTANT!)
-VAE_target_pos_ratio: 0.3
+VAE_target_pos_ratio: 0.15
 
 # Feature extraction for visualization
 extract_features: true
@@ -78,7 +78,7 @@ test: True
 
 unseen_hospital_test: True
 # the target hospital must be in selected hospital list!
-target_hospital_id: 458
+target_hospital_id: 199
 
 run_bootstrap_evaluation: True
 bootstrap_seeds: 100
@@ -89,7 +89,7 @@ eval_metric: "auprc"
 target_hospital_list: [167, 420, 199, 458, 252, 165, 148, 281, 449, 283] 
 auto_select_hospitals: True  
 
-eval_algorithms: ["fedfed", "fedprox", "fedavg"] 
+eval_algorithms: ["fedfed", "fedavg", "fedprox"] 
 
 # Output settings
 output_path: "./output/evaluation_results"

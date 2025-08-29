@@ -242,9 +242,9 @@ class NormalTrainer(object):
             loss_avg.update(loss.data.item(), batch_size)
             acc.update(accuracy.item(), batch_size)
             
-            if (batch_idx + 1) % 50 == 0:
-                logging.info('| Epoch [%3d] Iter[%3d/%3d]\t\tLoss: %.4f Acc@1: %.3f%%' %
-                            (epoch, batch_idx + 1, len(trainloader), loss_avg.avg, acc.avg))
+            # if (batch_idx + 1) % 30 == 0:
+            #     logging.info('| Epoch [%3d] Iter[%3d/%3d]\t\tLoss: %.4f Acc@1: %.3f%%' %
+            #                 (epoch, batch_idx + 1, len(trainloader), loss_avg.avg, acc.avg))
 
 
     def _train_mix_dataloader_medical(self, epoch, trainloader, device, **kwargs):

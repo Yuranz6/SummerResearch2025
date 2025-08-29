@@ -502,10 +502,9 @@ class Client(PSTrainer):
     
     # TODO: double check its correctness
     
-    def _sample_shared_data_proportional(self, share_data, share_y,  pos_proportion=0.3):
+    def _sample_shared_data_proportional(self, share_data, share_y,  pos_proportion=0.1):
             '''Instead of balanced sampling as in original FedFed, we used porportional sampling for both positive and negative samples'''
             target_total = min(self.local_sample_number, len(share_data))
-            print(f"global shared length: {len(share_data)}")
             target_pos = int(target_total * pos_proportion)
             pos_indices = torch.where(share_y == 1)[0]
             actual_pos = min(target_pos, len(pos_indices))

@@ -5,6 +5,7 @@ from .bootstrap_evaluator import BootstrapEvaluator
 from .metrics import MedicalMetrics
 from model.build import create_model
 from trainers.build import create_trainer
+from utils.set import set_random_seed
 
 class FedProxEvaluator:
     
@@ -16,7 +17,8 @@ class FedProxEvaluator:
         self.fedprox_mu = getattr(args, 'fedprox_mu', 0.05)
         
     def train_fedprox_model(self, train_data_loaders, validation_data, target_hospital_data):
-
+        set_random_seed(self.args.seed)
+        
         logging.info(f"Training FedProx baseline model (mu={self.fedprox_mu}, no VAE)")
         
         global_model = create_model(
@@ -119,7 +121,6 @@ class FedProxEvaluator:
         return results
     
     def run_complete_evaluation(self, train_data_loaders, target_hospital_data, target_hospital_id):
-
         validation_data = self.bootstrap_evaluator.prepare_target_hospital_data(
             target_hospital_data['x_target'],
             target_hospital_data['y_target']

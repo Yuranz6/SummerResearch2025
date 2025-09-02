@@ -7,6 +7,7 @@ from .metrics import MedicalMetrics
 from model.build import create_model
 from trainers.build import create_trainer
 from utils.data_utils import get_avg_num_iterations
+from utils.set import set_random_seed
 
 class FedAvgEvaluator:
     """
@@ -19,6 +20,8 @@ class FedAvgEvaluator:
         self.bootstrap_evaluator = BootstrapEvaluator(args, device)
         
     def train_fedavg_model(self, train_data_loaders, validation_data, target_hospital_data):
+        set_random_seed(self.args.seed)
+        
         global_model = create_model(
             self.args, 
             model_name=self.args.model, 
@@ -118,7 +121,6 @@ class FedAvgEvaluator:
         """
         Complete FedAvg evaluation: train model + bootstrap evaluation
         """
-        
         validation_data = self.bootstrap_evaluator.prepare_target_hospital_data(
             target_hospital_data['x_target'],
             target_hospital_data['y_target']

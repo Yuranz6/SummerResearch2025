@@ -221,12 +221,10 @@ class NormalTrainer(object):
             if self.args.fedprox:
                 fed_prox_reg = 0.0
                 previous_model = kwargs["previous_model"]
-                
                 for name, param in self.model.named_parameters():
                     prev_param = previous_model[name].data.to(device)  
                     param_diff_squared = torch.norm(param - prev_param, p=2)**2  # L2 norm squared
                     fed_prox_reg += (self.args.fedprox_mu / 2) * param_diff_squared
-                
                 loss += fed_prox_reg
             # ========================FedProx=====================#
 

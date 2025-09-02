@@ -5,6 +5,7 @@ from .bootstrap_evaluator import BootstrapEvaluator
 from .metrics import MedicalMetrics
 from algorithms_standalone.fedavg.FedAVGManager import FedAVGManager
 from data_preprocessing.build import load_data
+from utils.set import set_random_seed
 
 class FedFedEvaluator:
 
@@ -16,6 +17,7 @@ class FedFedEvaluator:
         
     def train_fedfed_model(self, train_data_loaders, validation_data, target_hospital_data, existing_data=None):
         """Train FedFed model using existing data to ensure consistency with FedAvg/FedProx"""
+        set_random_seed(self.args.seed)
         
         original_vae = getattr(self.args, 'VAE', False)
         self.args.VAE = True

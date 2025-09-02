@@ -22,7 +22,7 @@ partition_method: "hospital"
 partition_alpha: 0.1 # Not used for hospital partition
 
 fedprox: False
-fedprox_mu: 0.005
+fedprox_mu: 0.5
 
 
 # VAE configuration
@@ -78,18 +78,18 @@ test: True
 
 unseen_hospital_test: True
 # the target hospital must be in selected hospital list!
-target_hospital_id: 199
+target_hospital_id: 167
 
 run_bootstrap_evaluation: True
 bootstrap_seeds: 100
-eval_test_size: 0.75
-eval_val_size: 0.25 
+eval_test_size: 0.5
+eval_val_size: 0.5 
 eval_metric: "auprc"
 
 target_hospital_list: [167, 420, 199, 458, 252, 165, 148, 281, 449, 283] 
 auto_select_hospitals: True  
 
-eval_algorithms: ["fedfed", "fedavg", "fedprox"] 
+eval_algorithms: ["fedfed", "fedavg"] 
 
 # Output settings
 output_path: "./output/evaluation_results"

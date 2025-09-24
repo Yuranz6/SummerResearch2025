@@ -3,12 +3,11 @@
 A Research Project in Federated Learning. Repo adapted from the seminal work FedFed: https://github.com/tmlr-group/FedFed
 Keywords: Machine Learning, Federated Learning, Healthcare, Disentangled Representation Learning, Time-series EHR
 
-Most up-to-date work in Master branch
-
 ## Dataset
 
 eICU: https://eicu-crd.mit.edu/
 Initial preprocessing using drug_harmonization.py
+
 MIMIC-III: to be added
 
 ## Architetcure:

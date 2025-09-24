@@ -116,6 +116,8 @@ _C.client_select = "random"  #   ood_score, ood_score_oracle
 # loss function
 # ---------------------------------------------------------------------------- #
 _C.loss_fn = 'CrossEntropy'
+_C.focal_alpha = 0.25
+_C.focal_gamma = 2.0
 _C.exchange_model = True
 
 
@@ -178,7 +180,7 @@ _C.VAE_curriculum = True
 # Medical task settings
 # ---------------------------------------------------------------------------- #
 _C.medical_task = 'death'  # Options: 'death', 'ventilation', 'sepsis'
-_C.VAE_input_dim = 256
+_C.VAE_input_dim = 268
 _C.dropout_rate = 0.2
 _C.use_batch_norm = True
 _C.unseen_hospital_test = False

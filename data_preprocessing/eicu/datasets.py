@@ -33,7 +33,7 @@ class eICU_Medical_Dataset(data.Dataset):
         self.data, self.targets, self.hospital_ids = self._load_data()
         
     def _load_data(self):
-        data_path = os.path.join(self.root, 'eicu_harmonized.csv')
+        data_path = os.path.join(self.root, 'eicu_mimic_drug_lab.csv')
         
         if not os.path.exists(data_path):
             raise FileNotFoundError(
@@ -45,7 +45,7 @@ class eICU_Medical_Dataset(data.Dataset):
         df = pd.read_csv(data_path)
         
         feature_cols = [col for col in df.columns if col not in 
-                       ['patientunitstayid', 'hospitalid', 'death', 'ventilation', 'sepsis']]
+                       ['patientunitstayid', 'length_of_stay', 'hospitalid', 'death', 'ventilation', 'sepsis']]
         
         X = df[feature_cols].values.astype(np.float32)
         

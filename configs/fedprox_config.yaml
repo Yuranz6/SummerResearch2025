@@ -8,7 +8,7 @@ model_output_dim: 1
 model_input_channels: 1
 num_classes: 2
 
-VAE_input_dim: 256
+VAE_input_dim: 268
 dropout_rate: 0.2
 use_batch_norm: True
 
@@ -46,11 +46,11 @@ target_hospital_id: 167
 run_bootstrap_evaluation: True
 bootstrap_seeds: 20
 eval_test_size: 0.5
-eval_val_size: 0.5 
+eval_val_size: 0.5
 eval_metric: "auprc"
 
-target_hospital_list: [167, 420, 199, 458, 252, 165, 148, 281, 449, 283] 
-auto_select_hospitals: True  
+target_hospital_list: [167, 420, 199, 458, 252, 165, 148, 281, 449, 283]
+auto_select_hospitals: True
 
 # Output settings
 output_path: "./output/evaluation_results"

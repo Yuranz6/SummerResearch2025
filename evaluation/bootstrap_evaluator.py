@@ -39,7 +39,7 @@ class BootstrapEvaluator:
         )
         
         return {
-            'x_target_train': x_target,  # Full target data for training 
+            'x_target_train': x_target,  # we use full target data for training 
             'y_target_train': y_target,
             'x_target_val': x_target_val,
             'y_target_val': y_target_val,

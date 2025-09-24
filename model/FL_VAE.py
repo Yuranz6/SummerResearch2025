@@ -302,7 +302,7 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
         self.noise_type = args.noise_type
         self.with_classifier = with_classifier
         
-        self.input_dim = getattr(args, 'VAE_input_dim', 256)  
+        self.input_dim = getattr(args, 'VAE_input_dim', 268)  
         self.hidden_dim = d
         self.latent_dim = z
         
@@ -395,7 +395,7 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
     def decode(self, z):
         """Decode latent representation"""
         h3 = self.decoder(z)
-        return torch.tanh(h3)
+        return h3
     
     def forward(self, x):
         """
@@ -416,7 +416,7 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
         xi_decoded = self.decode(hi_projected)
         xi = self.decoder_last(xi_decoded)
         xi = self.xi_bn(xi)
-        xi = torch.tanh(xi) 
+        xi = torch.sigmoid(xi)  # Changed from tanh to sigmoid for binary medical features 
      
         
         if self.with_classifier:
@@ -450,7 +450,7 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
         xi_decoded = self.decode(hi_projected)
         xi = self.decoder_last(xi_decoded)
         xi = self.xi_bn(xi)
-        xi = self.sigmoid(xi)
+        xi = torch.sigmoid(xi)
         return xi
     
     def loss_function(self, **kwargs):

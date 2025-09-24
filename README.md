@@ -1,15 +1,19 @@
 # Summer Research Project 2025 @McGill Univ.
 
 A Research Project in Federated Learning. Repo adapted from the seminal work FedFed: https://github.com/tmlr-group/FedFed
+Keywords: Machine Learning, Federated Learning, Healthcare, Disentangled Representation Learning, Time-series EHR
+
+Most up-to-date work in Master branch
 
 ## Dataset
 eICU: https://eicu-crd.mit.edu/
-Initial preprocessing using drug_harmonize.py
+Initial preprocessing using drug_harmonization.py
+MIMIC-III: to be added
 
 ## Architetcure:
 
 ### Phase 1: Data Loading & Initialization
-'''bash
+'''
  BasePSManager.__init__()
   ├── _setup_datasets()
   │   └── load_data() → Data_Loader.load_data()
@@ -24,9 +28,9 @@ Initial preprocessing using drug_harmonize.py
 '''
 
 ### Phase 2: Training Pipeline
-'''bash
+'''
   BasePSManager.train()
-  ├── Phase 2.1: VAE Training (if VAE=True)
+  ├── Phase 2.1: VAE Training 
   │   ├── _share_data_step() → Multiple VAE rounds
   │   │   └── For each client: client.train_vae_model()
   │   └── _get_local_shared_data() → Aggregate shared features
@@ -45,7 +49,7 @@ Initial preprocessing using drug_harmonize.py
 '''
 
 # Phase 3: Evaluation:
-'''bash
+'''
   evaluation/
     ├── integration_helper.py     # Main integration interface
     ├── bootstrap_evaluator.py    # Core bootstrap sampling engine
@@ -62,12 +66,12 @@ Initial preprocessing using drug_harmonize.py
 
 ### Option 1: Integrated Training + Evaluation
 set the necessary params in eicu_config.yaml
-'''bash
+'''
   python main.py --config_file configs/eicu_config.yaml
 '''
 
 # Option 2: Standalone Evaluation
-'''bash
+'''
 python evaluation/run_evaluation.py \
       --target_hospital_id 167 \
       --algorithm fedfed \

@@ -8,7 +8,7 @@ model_output_dim: 1
 model_input_channels: 1
 num_classes: 2
 
-VAE_input_dim: 256 # need double check
+VAE_input_dim: 268 # need double check
 dropout_rate: 0.2
 use_batch_norm: True
 
@@ -17,29 +17,27 @@ algorithm: "FedAvg"
 client_num_in_total: 9
 client_num_per_round: 5
 comm_round: 100
-global_epochs_per_round: 2
+global_epochs_per_round: 5
 partition_method: "hospital"
-partition_alpha: 0.1 # Not used for hospital partition
 
 fedprox: False
 fedprox_mu: 0.5
-
 
 # VAE configuration
 VAE: True
 VAE_comm_round: 10
 VAE_client_num_per_round: 9
-VAE_local_epoch: 3
+VAE_local_epoch: 2
 
 # VAE loss weights
 VAE_re: 4.0
-VAE_ce: 2.0
+VAE_ce: 3.0
 VAE_kl: 0.005
-VAE_x_ce: 0.5 
+VAE_x_ce: 0.5
 
 # VAE architecture
 VAE_d: 128 # Hidden dimension
-VAE_z: 16 # Latent dimension
+VAE_z: 8 # Latent dimension
 
 # Noise parameters (DP protection)
 VAE_mean: 0.0
@@ -49,8 +47,13 @@ noise_type: "Gaussian"
 
 batch_size: 64
 VAE_batch_size: 64
-lr: 0.001
+lr: 0.0002
+wd: 0.001 # weight decay
 VAE_loss: "focal"
+
+loss_fn: "focal" # for federated model training & eval
+focal_alpha: 0.85
+focal_gamma: 2.0
 seed: 42
 
 # Medical-specific settings
@@ -83,14 +86,14 @@ target_hospital_id: 167
 run_bootstrap_evaluation: True
 bootstrap_seeds: 100
 eval_test_size: 0.5
-eval_val_size: 0.5 
+eval_val_size: 0.5
 eval_metric: "auprc"
 
-target_hospital_list: [167, 420, 199, 458, 252, 165, 148, 281, 449, 283] 
-auto_select_hospitals: True  
+target_hospital_list: [167, 420, 199, 458, 252, 165, 148, 281, 449, 283]
+auto_select_hospitals: True
 
-eval_algorithms: ["fedfed", "fedavg"] 
+eval_algorithms: ["fedfed", "fedavg", "fedprox", "centralized"]
 
 # Output settings
 output_path: "./output/evaluation_results"
-create_evaluation_plots: True 
+create_evaluation_plots: True

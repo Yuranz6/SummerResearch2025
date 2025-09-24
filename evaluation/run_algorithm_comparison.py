@@ -74,7 +74,7 @@ def extract_train_data_loaders(train_data_local_ori_dict, train_targets_local_or
                 client_dataset, 
                 batch_size=batch_size, 
                 shuffle=True, 
-                drop_last=False,
+                drop_last=True,
                 num_workers=1
             )
             train_data_loaders.append(client_dataloader)
@@ -119,10 +119,10 @@ def main():
         partition_alpha=args.partition_alpha,
         client_number=args.client_num_in_total,
         batch_size=args.batch_size,
-        num_workers=getattr(args, 'data_load_num_workers', 1),  # FIXED: Use config value
-        data_sampler=getattr(args, 'data_sampler', 'random'),   # FIXED: Use config value
-        resize=getattr(args, 'dataset_load_image_size', 32),    # FIXED: Use config value
-        augmentation=getattr(args, 'dataset_aug', 'default')    # FIXED: Use config value
+        num_workers=getattr(args, 'data_load_num_workers', 1),  
+        data_sampler=getattr(args, 'data_sampler', 'random'),   
+        resize=getattr(args, 'dataset_load_image_size', 32),    
+        augmentation=getattr(args, 'dataset_aug', 'default')    
     )
     
     print(f"Data loaded successfully:")
@@ -147,7 +147,6 @@ def main():
     
     comparison_evaluator = ComparisonEvaluator(args, device)
     
-    # Prepare existing data for FedFed consistency
     existing_data = {
         'train_data_local_ori_dict': train_data_local_ori_dict,
         'train_targets_local_ori_dict': train_targets_local_ori_dict,
@@ -174,7 +173,6 @@ def main():
         
         print(f"\nComparison completed!")
         
-        # Generate visualization
         if getattr(args, 'create_evaluation_plots', True):
             print("Generating comparison plots...")
             

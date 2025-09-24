@@ -63,7 +63,6 @@ class FedProxEvaluator:
                 self.args.fedprox = True
                 self.args.fedprox_mu = self.fedprox_mu
                 
-                # Local training with proximal term using standard dataloader
                 for epoch in range(self.args.global_epochs_per_round):
                     model_trainer.train_dataloader(
                         epoch, train_loader, self.device,

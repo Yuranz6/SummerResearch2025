@@ -53,7 +53,7 @@ class FeatureExtractor:
             torch.LongTensor(targets)
         )
         dataloader = torch.utils.data.DataLoader(
-            dataset, batch_size=64, shuffle=False, drop_last=False
+            dataset, batch_size=64, shuffle=False, drop_last=True
         )
         
         # Extract features

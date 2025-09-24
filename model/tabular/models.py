@@ -16,7 +16,7 @@ class Medical_MLP_Classifier(nn.Module):
     - Designed for binary classification 
     """
     
-    def __init__(self, input_dim=256, num_classes=1, hidden_dims=[128, 64], 
+    def __init__(self, input_dim=268, num_classes=1, hidden_dims=[128, 64], 
                  dropout_rate=0.2, use_batch_norm=False):
         
         super(Medical_MLP_Classifier, self).__init__()

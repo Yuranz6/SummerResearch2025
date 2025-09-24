@@ -28,16 +28,12 @@ class FocalLoss(nn.Module):
         
         targets = targets.float()
         
-        # Compute BCE loss
         bce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
         
-        # Compute p_t
         p_t = torch.exp(-bce_loss)
         
-        # Compute alpha term  
         alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
         
-        # Compute focal loss
         focal_loss = alpha_t * (1 - p_t) ** self.gamma * bce_loss
         
         if self.reduction == 'mean':
@@ -59,6 +55,10 @@ def create_loss(args, device=None, **kwargs):
         loss_fn = nn.CrossEntropyLoss()
     elif args.loss_fn == "nll_loss":
         loss_fn = nn.NLLLoss()
+    elif args.loss_fn == "focal":
+        alpha = getattr(args, "focal_alpha", 0.85)
+        gamma = getattr(args, "focal_gamma", 2.0)
+        loss_fn = FocalLoss(alpha=alpha, gamma=gamma)
     else:
         raise NotImplementedError
 

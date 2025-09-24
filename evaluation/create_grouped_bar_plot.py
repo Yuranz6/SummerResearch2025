@@ -27,7 +27,6 @@ def main():
     
     hospital_ids = [167, 420, 199, 458]  
     
-    print(f"Creating grouped box plots for hospitals: {hospital_ids}")
     print(f"Output directory: {output_path}")
     
     vis = Visualization(output_path)
@@ -52,10 +51,6 @@ def main():
             print(f"✗ Error creating {metric} plot: {e}")
     
     print(f"\\nAll plots saved to: {output_path}")
-    print("\\nTo use this script:")
-    print("1. Update the 'hospital_ids' list with your actual target hospital IDs")
-    print("2. Make sure your JSON files follow the naming pattern: comparison_hospital_[ID]_results.json")
-    print("3. Run: python evaluation/create_grouped_bar_plot.py")
-
+   
 if __name__ == '__main__':
     main()

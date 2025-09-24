@@ -76,10 +76,6 @@ class Visualization:
         # this is similar to Fedweight (buggy)
         # self._add_statistical_annotations(df, metric.upper(), ax, algorithm_labels)
         
-        for i, algorithm in enumerate(algorithm_labels):
-            alg_data = df[df['Algorithm'] == algorithm][metric.upper()]
-            mean_val = alg_data.mean()
-            ax.scatter(i, mean_val, color='red', s=50, zorder=3, marker='D')
         
         plt.tight_layout()
         # save
@@ -92,15 +88,13 @@ class Visualization:
         return fig, ax
     
     def _add_statistical_annotations(self, df, metric_col, ax, algorithms):
-        """Add statistical significance annotations between algorithms"""
+        """ statistical significance annotations between algorithms"""
         if len(algorithms) < 2:
             return
             
-        # Perform pairwise statistical tests
         y_max = df[metric_col].max()
         y_range = df[metric_col].max() - df[metric_col].min()
         
-        # Get unique pairs
         pairs = [(i, j) for i in range(len(algorithms)) for j in range(i+1, len(algorithms))]
         
         annotation_height = y_max + 0.02 * y_range
@@ -109,14 +103,14 @@ class Visualization:
             alg1_data = df[df['Algorithm'] == algorithms[i]][metric_col]
             alg2_data = df[df['Algorithm'] == algorithms[j]][metric_col]
             
-            # Wilcoxon rank-sum test (Mann-Whitney U test)
+            # wilcoxon rank-sum test
             try:
                 statistic, p_value = stats.mannwhitneyu(
                     alg1_data, alg2_data, 
                     alternative='two-sided'
                 )
                 
-                # Determine significance level
+                # significance level
                 if p_value < 0.001:
                     sig_symbol = '***'
                 elif p_value < 0.01:
@@ -124,15 +118,13 @@ class Visualization:
                 elif p_value < 0.05:
                     sig_symbol = '*'
                 else:
-                    sig_symbol = 'ns'  # not significant
+                    sig_symbol = 'ns'  
                 
-                # Add annotation
                 current_height = annotation_height + (idx * 0.03 * y_range)
                 
-                # Draw line
                 ax.plot([i, j], [current_height, current_height], 'k-', lw=1)
                 
-                # Add significance marker
+                # significance marker
                 ax.text((i + j) / 2, current_height + 0.01 * y_range, 
                        sig_symbol, ha='center', va='bottom', fontsize=10)
                 
@@ -229,14 +221,9 @@ class Visualization:
     1
     
     def create_grouped_boxplot(self, hospital_ids, metric='auprc', algorithms=['fedavg', 'fedprox', 'fedfed']):
-        """
-        Create grouped box plot comparing algorithms across multiple hospitals
-        X-axis: Hospital IDs
-        For each hospital: 3 box plots (one for each algorithm)
-        """
+
         all_data = []
         
-        # Collect data for each hospital and algorithm
         for hospital_id in hospital_ids:
             results_data = self.load_comparison_results(hospital_id)
             if results_data is not None:
@@ -252,9 +239,6 @@ class Visualization:
                                     metric.upper(): value
                                 })
         
-        if not all_data:
-            logging.error("No data found for grouped box plot")
-            return None
         
         df = pd.DataFrame(all_data)
         
@@ -266,7 +250,7 @@ class Visualization:
             y=metric.upper(),
             hue='Algorithm',
             ax=ax,
-            palette={'FEDAVG': '#5faffa', 'FEDPROX': '#fa8296', 'FEDFED': '#50c8a3'}
+            palette={'FEDAVG': '#5faffa', 'FEDPROX': '#fa8296', 'FEDFED': '#50c8a3', 'CENTRALIZED': '#ff9500'}
         )
         
         ax.set_xlabel('Target Hospital', fontsize=12, fontweight='bold')
@@ -282,13 +266,6 @@ class Visualization:
         hospitals = df['Hospital'].unique()
         algorithms_list = df['Algorithm'].unique()
         
-        for i, hospital in enumerate(hospitals):
-            for j, algorithm in enumerate(algorithms_list):
-                subset = df[(df['Hospital'] == hospital) & (df['Algorithm'] == algorithm)]
-                if not subset.empty:
-                    mean_val = subset[metric.upper()].mean()
-                    x_pos = i + (j - 1) * 0.27  # Adjust spacing based on seaborn's grouping
-                    ax.scatter(x_pos, mean_val, color='red', s=50, zorder=3, marker='D')
         
         plt.tight_layout()
         

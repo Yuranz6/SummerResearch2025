@@ -344,12 +344,12 @@ class Client(PSTrainer):
                 torch.FloatTensor(self.train_ori_data),
                 torch.LongTensor(self.train_ori_targets)
             )
-        
+
         trainloader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=self.args.VAE_batch_size,
             shuffle=True,
-            drop_last=False
+            drop_last=True
         )
         
         for epoch in range(self.args.VAE_local_epoch):
@@ -566,8 +566,6 @@ class Client(PSTrainer):
                 drop_last=False
             )
             
-            print(f"Medical 2-types FedFed training: original={len(ori_data_tensor)}, "
-                  f"rx_noise1={len(rx_noise1_sampled)}")
         else:
             raise Exception("No data gets shared!")
 

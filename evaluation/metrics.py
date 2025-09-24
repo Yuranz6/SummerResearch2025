@@ -3,9 +3,6 @@ import numpy as np
 from sklearn.metrics import precision_recall_curve, auc, accuracy_score, f1_score, log_loss, average_precision_score
 
 class MedicalMetrics:
-    """
-    Medical evaluation metrics for imbalanced eICU mortality prediction
-    """
     
     @staticmethod
     def calculate_auprc(y_true, y_pred_proba):
@@ -43,9 +40,6 @@ class MedicalMetrics:
     
     @staticmethod
     def evaluate_model(model, x_test, y_test, device='cuda'):
-        """
-        Evaluate a trained model on test data
-        """
         model.eval()
         with torch.no_grad():
             if not isinstance(x_test, torch.Tensor):

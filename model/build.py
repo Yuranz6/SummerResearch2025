@@ -69,12 +69,12 @@ def _create_medical_model(args, model_name, output_dim, device, **kwargs):
     Returns:
         torch.nn.Module: Medical model instance
     """
-    input_dim = getattr(args, 'VAE_input_dim', 256)  
+    input_dim = getattr(args, 'VAE_input_dim', 268)  
     
     if model_name == "medical_mlp" or args.dataset == 'eicu':
         logging.info(f"Creating Medical_MLP_Classifier: input_dim={input_dim}, output_dim={output_dim}")
         
-        hidden_dims = [256, 256]
+        hidden_dims = [268]  # Single layer like FedWeight (fl_hiddens: "268")
           
         
         model = Medical_MLP_Classifier(

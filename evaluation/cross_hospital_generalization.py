@@ -34,11 +34,9 @@ def test_cross_hospital_generalization(client_list, global_share_dataset1, globa
     """
     logging.info("Starting cross-hospital generalization test on global dataset...")
     
-    # Load evaluation configuration
     config = _load_evaluation_config(eval_config)
     exp_config = config.get('cross_hospital_generalization', {})
     
-    # Extract configuration parameters with defaults
     evaluation_metric = exp_config.get('evaluation_metric', 'auprc')
     classifier_epochs = exp_config.get('classifier_epochs', 50)
     classifier_lr = exp_config.get('classifier_lr', 0.001)
@@ -58,16 +56,13 @@ def test_cross_hospital_generalization(client_list, global_share_dataset1, globa
         'results_by_noise_mode': {}
     }
     
-    # Get global test data once (reuse for all experiments)
     global_test_data, global_test_labels = _extract_test_data(global_test_dataloader, device)
     mortality_rate = global_test_labels.float().mean().item()
     logging.info(f"Global test dataset: {len(global_test_data)} samples, mortality_rate={mortality_rate:.4f}")
     
-    # Test configured noise modes
     for noise_mode in noise_modes:
         logging.info(f"\n=== Testing noise mode {noise_mode} ===")
         
-        # Select appropriate global shared dataset
         global_share_data = global_share_dataset1 if noise_mode == 1 else global_share_dataset2
         
         mode_results = {
@@ -76,24 +71,20 @@ def test_cross_hospital_generalization(client_list, global_share_dataset1, globa
             'summary_stats': {}
         }
         
-        # For each hospital as source
         for source_idx in range(num_hospitals):
             source_client = client_list[source_idx]
             logging.info(f"\nTesting source hospital {source_idx}...")
             
             try:
-                # Prepare source hospital training data
                 source_train_data = torch.FloatTensor(source_client.train_ori_data)
                 source_train_labels = torch.LongTensor(source_client.train_ori_targets)
                 
-                # Create mixed training dataset (local + shared)
                 mixed_train_data, mixed_train_labels = _create_mixed_dataset(
                     source_train_data, source_train_labels,
                     global_share_data, global_share_y,
                     mixed_data_ratio
                 )
                 
-                # Train baseline classifier (local only)
                 logging.info(f"Training baseline classifier for hospital {source_idx}...")
                 baseline_classifier = _train_classifier(
                     source_train_data, source_train_labels, 
@@ -101,7 +92,6 @@ def test_cross_hospital_generalization(client_list, global_share_dataset1, globa
                     device, f"baseline_h{source_idx}_mode{noise_mode}", seed=args.seed
                 )
                 
-                # Train treatment classifier (local + shared)  
                 logging.info(f"Training treatment classifier for hospital {source_idx}...")
                 treatment_classifier = _train_classifier(
                     mixed_train_data, mixed_train_labels,
@@ -109,14 +99,11 @@ def test_cross_hospital_generalization(client_list, global_share_dataset1, globa
                     device, f"treatment_h{source_idx}_mode{noise_mode}", seed=args.seed
                 )
                 
-                # Test both classifiers on global test dataset
                 baseline_score = _evaluate_with_metric(baseline_classifier, global_test_data, global_test_labels, device, evaluation_metric)
                 treatment_score = _evaluate_with_metric(treatment_classifier, global_test_data, global_test_labels, device, evaluation_metric)
                 
-                # Calculate improvement
                 improvement = treatment_score - baseline_score
                 
-                # Store results
                 result = {
                     'source_hospital': source_idx,
                     'baseline_score': baseline_score,
@@ -126,7 +113,6 @@ def test_cross_hospital_generalization(client_list, global_share_dataset1, globa
                 }
                 mode_results['source_results'].append(result)
                 
-                # Log individual result
                 logging.info(f"H{source_idx}→Global: Baseline={baseline_score:.4f}, "
                            f"Treatment={treatment_score:.4f}, Improvement={improvement:+.4f}")
                            
@@ -134,7 +120,6 @@ def test_cross_hospital_generalization(client_list, global_share_dataset1, globa
                 logging.error(f"Error testing source hospital {source_idx}: {e}")
                 continue
         
-        # Calculate summary statistics
         if mode_results['source_results']:
             improvements = [r['improvement'] for r in mode_results['source_results']]
             mode_results['summary_stats'] = {

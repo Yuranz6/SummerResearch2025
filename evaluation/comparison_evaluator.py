@@ -6,20 +6,22 @@ import numpy as np
 from evaluation.fedavg_evaluator import FedAvgEvaluator
 from evaluation.fedprox_evaluator import FedProxEvaluator
 from evaluation.fedfed_evaluator import FedFedEvaluator
+from evaluation.centralized_evaluator import CentralizedEvaluator
 
 class ComparisonEvaluator:
     """
-    Orchestrates comparison between FedAvg, FedProx, and FedFed algorithms - For standalone use only?
+    Orchestrates comparison between FedAvg, FedProx, FedFed, and Centralized algorithms
     """
-    
+
     def __init__(self, args, device='cuda'):
         self.args = args
         self.device = device
-        
+
         self.fedavg_evaluator = FedAvgEvaluator(args, device)
         self.fedprox_evaluator = FedProxEvaluator(args, device)
         self.fedfed_evaluator = FedFedEvaluator(args, device)
-        
+        self.centralized_evaluator = CentralizedEvaluator(args, device)
+
         self.eval_algorithms = getattr(args, 'eval_algorithms', ['fedavg', 'fedprox', 'fedfed'])
         
         self.output_path = getattr(args, 'output_path', '../output/evaluation_results/')
@@ -52,7 +54,12 @@ class ComparisonEvaluator:
                     model, eval_results = self.fedfed_evaluator.run_complete_evaluation(
                         train_data_loaders, target_hospital_data, target_hospital_id, existing_data
                     )
-                    
+
+                elif algorithm.lower() == 'centralized':
+                    model, eval_results = self.centralized_evaluator.run_complete_evaluation(
+                        train_data_loaders, target_hospital_data, target_hospital_id, existing_data
+                    )
+
                 else:
                     logging.warning(f"Unknown algorithm: {algorithm}")
                     continue
@@ -80,7 +87,6 @@ class ComparisonEvaluator:
     def run_evaluation_on_pretrained_models(self, trained_models, target_hospital_data, target_hospital_id):
         """
         Run bootstrap evaluation on already trained models
-        Useful for quick evaluation without retraining
         """
         logging.info(f"Running bootstrap evaluation on pre-trained models for hospital {target_hospital_id}")
         
@@ -102,7 +108,11 @@ class ComparisonEvaluator:
                     eval_results = self.fedfed_evaluator.evaluate_with_bootstrap(
                         model, target_hospital_data, target_hospital_id
                     )
-                
+                elif algorithm.lower() == 'centralized':
+                    eval_results = self.centralized_evaluator.evaluate_with_bootstrap(
+                        model, target_hospital_data, target_hospital_id
+                    )
+
                 results[algorithm] = eval_results
         
         self._save_comparison_results(results, target_hospital_id)
@@ -111,7 +121,6 @@ class ComparisonEvaluator:
         return results
     
     def _save_comparison_results(self, results, target_hospital_id):
-        """Save comparison results to JSON file"""
         filename = f"comparison_hospital_{target_hospital_id}_results.json"
         filepath = os.path.join(self.output_path, filename)
         
@@ -140,7 +149,6 @@ class ComparisonEvaluator:
         logging.info(f"Comparison results saved to: {filepath}")
     
     def _log_comparison_summary(self, results, target_hospital_id):
-        """Log comparison summary across algorithms"""
         logging.info(f"\n=== COMPARISON SUMMARY - Hospital {target_hospital_id} ===")
         
         primary_metric = getattr(self.args, 'eval_metric', 'auprc')

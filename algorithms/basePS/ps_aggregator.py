@@ -87,7 +87,6 @@ class PSAggregator(object):
 
     def add_local_trained_result(self, index, model_params, model_indexes, sample_num,
                                  client_other_params=None):
-        logging.info("add_model. index = %d" % index)
         self.model_dict[index] = model_params
         self.sample_num_dict[index] = sample_num
         self.client_other_params_dict[index] = client_other_params

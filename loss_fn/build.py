@@ -59,6 +59,8 @@ def create_loss(args, device=None, **kwargs):
         alpha = getattr(args, "focal_alpha", 0.85)
         gamma = getattr(args, "focal_gamma", 2.0)
         loss_fn = FocalLoss(alpha=alpha, gamma=gamma)
+    elif args.loss_fn == "mse":
+        loss_fn = nn.MSELoss()
     else:
         raise NotImplementedError
 

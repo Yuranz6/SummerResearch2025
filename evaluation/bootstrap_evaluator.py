@@ -3,7 +3,7 @@ import numpy as np
 import logging
 from sklearn.model_selection import train_test_split
 from sklearn.utils import resample
-from sklearn.metrics import average_precision_score, accuracy_score, log_loss, f1_score
+from sklearn.metrics import average_precision_score, accuracy_score, log_loss, f1_score, mean_squared_error, mean_absolute_error
 import os
 import json
 
@@ -49,13 +49,23 @@ class BootstrapEvaluator:
     # for evaluating trained model
     def run_bootstrap_evaluation(self, model, target_data, algorithm_name, target_hospital_id):
         model.eval()
-        
-        bootstrap_results = {
-            'loss': [],
-            'accuracy': [],
-            'auprc': [],
-            'f1_score': []
-        }
+
+        # Determine if this is regression or classification
+        is_regression = getattr(self.args, 'medical_task', 'death') == 'length'
+
+        if is_regression:
+            bootstrap_results = {
+                'loss': [],  # MSE loss
+                'mae': [],   # Mean Absolute Error
+                'rmse': []   # Root Mean Squared Error
+            }
+        else:
+            bootstrap_results = {
+                'loss': [],
+                'accuracy': [],
+                'auprc': [],
+                'f1_score': []
+            }
         # for now using the entire target hos data for eval
         x_non_train = target_data['x_target_train']
         y_non_train = target_data['y_target_train']
@@ -74,32 +84,48 @@ class BootstrapEvaluator:
                 outputs = model(x_test_tensor)
                 if outputs.dim() > 1 and outputs.shape[1] == 1:
                     outputs = outputs.squeeze()
-                
-                y_pred_proba = torch.sigmoid(outputs).cpu().numpy()
+
                 y_true = y_test_tensor.cpu().numpy()
-                
-                try:
-                    loss = log_loss(y_true, y_pred_proba)
-                    bootstrap_results['loss'].append(loss)
-                except Exception as e:
-                    print(e)
-                    bootstrap_results['loss'].append(np.nan)
-                
-                y_pred = (y_pred_proba > 0.5).astype(int)
-                accuracy = accuracy_score(y_true, y_pred)
-                bootstrap_results['accuracy'].append(accuracy)
-                
-                try:
-                    auprc = average_precision_score(y_true, y_pred_proba)
-                    bootstrap_results['auprc'].append(auprc)
-                except:
-                    bootstrap_results['auprc'].append(np.nan)
-                
-                try:
-                    f1 = f1_score(y_true, y_pred, zero_division=0)
-                    bootstrap_results['f1_score'].append(f1)
-                except:
-                    bootstrap_results['f1_score'].append(np.nan)
+
+                if is_regression:
+                    # For regression: raw logits
+                    y_pred = outputs.cpu().numpy()
+
+                    mse_loss = mean_squared_error(y_true, y_pred)
+                    bootstrap_results['loss'].append(mse_loss)
+
+                    mae = mean_absolute_error(y_true, y_pred)
+                    bootstrap_results['mae'].append(mae)
+
+                    rmse = np.sqrt(mse_loss)
+                    bootstrap_results['rmse'].append(rmse)
+
+                else:
+                    # For classification: model returns logits, apply sigmoid for probabilities
+                    y_pred_proba = torch.sigmoid(outputs).cpu().numpy()
+
+                    try:
+                        loss = log_loss(y_true, y_pred_proba)
+                        bootstrap_results['loss'].append(loss)
+                    except Exception as e:
+                        print(e)
+                        bootstrap_results['loss'].append(np.nan)
+
+                    y_pred = (y_pred_proba > 0.5).astype(int)
+                    accuracy = accuracy_score(y_true, y_pred)
+                    bootstrap_results['accuracy'].append(accuracy)
+
+                    try:
+                        auprc = average_precision_score(y_true, y_pred_proba)
+                        bootstrap_results['auprc'].append(auprc)
+                    except:
+                        bootstrap_results['auprc'].append(np.nan)
+
+                    try:
+                        f1 = f1_score(y_true, y_pred, zero_division=0)
+                        bootstrap_results['f1_score'].append(f1)
+                    except:
+                        bootstrap_results['f1_score'].append(np.nan)
         
         processed_results = {}
         for metric in bootstrap_results:

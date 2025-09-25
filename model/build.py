@@ -74,7 +74,8 @@ def _create_medical_model(args, model_name, output_dim, device, **kwargs):
     if model_name == "medical_mlp" or args.dataset == 'eicu':
         logging.info(f"Creating Medical_MLP_Classifier: input_dim={input_dim}, output_dim={output_dim}")
         
-        hidden_dims = [268]  # Single layer like FedWeight (fl_hiddens: "268")
+        hidden_dims = [input_dim] # following fedweight's design for now, need to reduce later
+        linear_regression = getattr(args, 'medical_task') == 'length'
           
         
         model = Medical_MLP_Classifier(
@@ -82,7 +83,8 @@ def _create_medical_model(args, model_name, output_dim, device, **kwargs):
             num_classes=output_dim,
             hidden_dims=hidden_dims,
             dropout_rate=getattr(args, 'dropout_rate', 0.2),
-            use_batch_norm=getattr(args, 'use_batch_norm', True)
+            use_batch_norm=getattr(args, 'use_batch_norm', True),
+            linear_regression = linear_regression
         )
         
     else:

@@ -88,7 +88,7 @@ class Visualization:
         return fig, ax
     
     def _add_statistical_annotations(self, df, metric_col, ax, algorithms):
-        """ statistical significance annotations between algorithms"""
+        """Add statistical significance annotations between algorithms"""
         if len(algorithms) < 2:
             return
             

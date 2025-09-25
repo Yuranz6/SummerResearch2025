@@ -1,6 +1,6 @@
 dataset: "eicu"
 data_dir: "./data"
-medical_task: "death" # Options: 'death', 'ventilation', 'sepsis'
+medical_task: "death" # Options: 'death', 'ventilation', 'sepsis', 'length'
 
 # Model config
 model: "medical_mlp"
@@ -51,7 +51,7 @@ lr: 0.0002
 wd: 0.001 # weight decay
 VAE_loss: "focal"
 
-loss_fn: "focal" # for federated model training & eval
+loss_fn: "focal" # for federated model training & eval: CrossEntropy, focal or mse
 focal_alpha: 0.85
 focal_gamma: 2.0
 seed: 42
@@ -81,18 +81,18 @@ test: True
 
 unseen_hospital_test: True
 # the target hospital must be in selected hospital list!
-target_hospital_id: 167
+target_hospital_id: 458
 
 run_bootstrap_evaluation: True
 bootstrap_seeds: 100
 eval_test_size: 0.5
 eval_val_size: 0.5
-eval_metric: "auprc"
+eval_metric: "auprc" # need change depending on classification/regression: loss/auprc
 
 target_hospital_list: [167, 420, 199, 458, 252, 165, 148, 281, 449, 283]
 auto_select_hospitals: True
 
-eval_algorithms: ["fedfed", "fedavg", "fedprox", "centralized"]
+eval_algorithms: ["centralized", "fedfed", "fedavg", "fedprox", "centralized"]
 
 # Output settings
 output_path: "./output/evaluation_results"

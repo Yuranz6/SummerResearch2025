@@ -53,14 +53,16 @@ class eICU_Medical_Dataset(data.Dataset):
             y = df['ventilation'].values.astype(np.float32)
         elif self.task == 'sepsis':
             y = df['sepsis'].values.astype(np.float32)
-        else:  
+        elif self.task == 'length':
+            y = df['length_of_stay'].values.astype(np.float32)
+        else:
             y = df['death'].values.astype(np.float32)
         
         hospital_ids = df['hospitalid'].values
         
         # Question: stratification needed?
         X_train, X_test, y_train, y_test, hospital_train, hospital_test = train_test_split(
-            X, y, hospital_ids, test_size=0.2, random_state=42, stratify=y
+            X, y, hospital_ids, test_size=0.2, random_state=42, stratify= None if self.task == 'length' else y
         )
         
         if self.train:

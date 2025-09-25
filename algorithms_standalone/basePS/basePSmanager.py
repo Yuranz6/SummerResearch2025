@@ -16,8 +16,8 @@ from utils.tool import *
 from model.build import create_model
 
 # Import evaluation tests
-from evaluation.simple_feature_similarity import compute_client_feature_similarity
-from evaluation.cross_hospital_generalization import test_cross_hospital_generalization
+# from evaluation.simple_feature_similarity import compute_client_feature_similarity
+# from evaluation.cross_hospital_generalization import test_cross_hospital_generalization
 
 
 
@@ -184,11 +184,10 @@ class BasePSManager(object):
 
             if client_idx == 0:
                 self.global_share_dataset1 = client_data1
-                self.global_share_dataset2 = None  # Single xs version - no second noise type
+                self.global_share_dataset2 = None  
                 self.global_share_data_y = data_y
             else:
                 self.global_share_dataset1 = torch.cat((self.global_share_dataset1, client_data1))
-                # No concatenation for dataset2 in single xs version
                 self.global_share_data_y = torch.cat((self.global_share_data_y, data_y))
         print(f"[DEBUG] Client {client_idx}: Contributing {client_data1.shape} features") 
 # ================================= PHASE 1.5: Post VAE Experiments =================================

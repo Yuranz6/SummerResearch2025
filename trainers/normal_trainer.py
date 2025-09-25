@@ -210,10 +210,9 @@ class NormalTrainer(object):
             self.optimizer.zero_grad()
 
             out = self.model(x)
-            
+
             if out.dim() > 1 and out.size(-1) == 1:
                 out = out.squeeze(-1)
-            self.criterion = F.binary_cross_entropy_with_logits
 
             loss = self.criterion(out, y.float())
 
@@ -232,10 +231,16 @@ class NormalTrainer(object):
             self.optimizer.step()
 
             with torch.no_grad():
-                probs = torch.sigmoid(out)
-                predictions = (probs > 0.5).float()
-                correct = (predictions == y.float()).float().sum()
-                accuracy = correct / batch_size * 100
+                is_regression = getattr(self.args, 'medical_task', 'death') == 'length'
+                if is_regression:
+                    # For regression: no accuracy calculation
+                    accuracy = 0.0  # Placeholder
+                else:
+                    # For classification: calculate accuracy
+                    probs = torch.sigmoid(out)
+                    predictions = (probs > 0.5).float()
+                    correct = (predictions == y.float()).float().sum()
+                    accuracy = correct / batch_size * 100
             
             loss_avg.update(loss.data.item(), batch_size)
             acc.update(accuracy.item(), batch_size)
@@ -287,8 +292,7 @@ class NormalTrainer(object):
 
             if out.dim() > 1 and out.size(-1) == 1:
                 out = out.squeeze(-1)
-            
-            self.criterion = F.binary_cross_entropy_with_logits
+
             loss = self.criterion(out, y.float())
             
             # FedProx regularization
@@ -305,10 +309,16 @@ class NormalTrainer(object):
             self.optimizer.step()
             
             with torch.no_grad():
-                probs = torch.sigmoid(out)
-                predictions = (probs > 0.5).float()
-                correct = (predictions == y).float().sum()
-                accuracy = correct / batch_size * 100
+                is_regression = getattr(self.args, 'medical_task', 'death') == 'length'
+                if is_regression:
+                    # For regression: no accuracy calculation
+                    accuracy = 0.0  # Placeholder
+                else:
+                    # For classification: calculate accuracy
+                    probs = torch.sigmoid(out)
+                    predictions = (probs > 0.5).float()
+                    correct = (predictions == y).float().sum()
+                    accuracy = correct / batch_size * 100
             
             loss_avg.update(loss.data.item(), batch_size)
             acc.update(accuracy.item(), batch_size)
@@ -348,27 +358,45 @@ class NormalTrainer(object):
                 if out.dim() > 1 and out.size(-1) == 1:
                     out = out.squeeze(-1)
                 
-                loss = F.binary_cross_entropy_with_logits(out, targets_float)
+                loss = self.criterion(out, targets_float)
                 total_loss += loss.item() * features.size(0)
-                
-                probs = torch.sigmoid(out)
-                
-                all_preds.extend(probs.cpu().numpy())
+
+                is_regression = getattr(self.args, 'medical_task', 'death') == 'length'
+                if is_regression:
+                    # For regression: raw outputs
+                    all_preds.extend(out.cpu().numpy())
+                else:
+                    # For classification: sigmoid probs
+                    probs = torch.sigmoid(out)
+                    all_preds.extend(probs.cpu().numpy())
+
                 all_targets.extend(targets_float.cpu().numpy())
         
         all_preds = np.array(all_preds)
         all_targets = np.array(all_targets)
-        
-        auprc = average_precision_score(all_targets, all_preds)
-        auc_roc = roc_auc_score(all_targets, all_preds)
-        
-        predictions = (all_preds > 0.5).astype(float)
-        accuracy = (predictions == all_targets).mean() * 100
-        
         avg_loss = total_loss / len(testloader.dataset)
-        
-        logging.info('| Test Round: %d | Loss: %.4f | Accuracy: %.2f%% | AUPRC: %.4f | AUC-ROC: %.4f' %
-                    (round, avg_loss, accuracy, auprc, auc_roc))
-        
-        return auprc
+
+        is_regression = getattr(self.args, 'medical_task', 'death') == 'length'
+
+        if is_regression:
+            # For regression: calculate MSE, MAE, RMSE
+            from sklearn.metrics import mean_squared_error, mean_absolute_error
+            mse = mean_squared_error(all_targets, all_preds)
+            mae = mean_absolute_error(all_targets, all_preds)
+            rmse = np.sqrt(mse)
+
+            logging.info('| Test Round: %d | Loss: %.4f | MSE: %.4f | MAE: %.4f | RMSE: %.4f' %
+                        (round, avg_loss, mse, mae, rmse))
+            return avg_loss  
+        else:
+            # For classification: calculate AUPRC, AUC-ROC, accuracy
+            auprc = average_precision_score(all_targets, all_preds)
+            auc_roc = roc_auc_score(all_targets, all_preds)
+
+            predictions = (all_preds > 0.5).astype(float)
+            accuracy = (predictions == all_targets).mean() * 100
+
+            logging.info('| Test Round: %d | Loss: %.4f | Accuracy: %.2f%% | AUPRC: %.4f | AUC-ROC: %.4f' %
+                        (round, avg_loss, accuracy, auprc, auc_roc))
+            return auprc
     

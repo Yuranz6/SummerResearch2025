@@ -114,7 +114,7 @@ class CentralizedEvaluator:
 
         combined_dataloader = self._combine_training_data(train_data_local_ori_dict, train_targets_local_ori_dict)
 
-        centralized_epochs = 150
+        centralized_epochs = 300
 
         logging.info(f"Starting centralized training for {centralized_epochs} epochs")
         logging.info(f"  Batch size: {self.args.batch_size}")

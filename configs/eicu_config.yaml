@@ -16,12 +16,12 @@ use_batch_norm: True
 algorithm: "FedAvg"
 client_num_in_total: 9
 client_num_per_round: 5
-comm_round: 100
+comm_round: 300
 global_epochs_per_round: 5
 partition_method: "hospital"
 
 fedprox: False
-fedprox_mu: 0.5
+fedprox_mu: 0.05
 
 # VAE configuration
 VAE: True
@@ -47,11 +47,11 @@ noise_type: "Gaussian"
 
 batch_size: 64
 VAE_batch_size: 64
-lr: 0.0002
-wd: 0.001 # weight decay
+lr: 0.0001
+wd: 0.0001 # weight decay
 VAE_loss: "focal"
 
-loss_fn: "focal" # for federated model training & eval: CrossEntropy, focal or mse
+loss_fn: "CrossEntropy" # for federated model training & eval: CrossEntropy, focal or mse
 focal_alpha: 0.85
 focal_gamma: 2.0
 seed: 42
@@ -81,7 +81,7 @@ test: True
 
 unseen_hospital_test: True
 # the target hospital must be in selected hospital list!
-target_hospital_id: 458
+target_hospital_id: 199
 
 run_bootstrap_evaluation: True
 bootstrap_seeds: 100
@@ -92,7 +92,7 @@ eval_metric: "auprc" # need change depending on classification/regression: loss/
 target_hospital_list: [167, 420, 199, 458, 252, 165, 148, 281, 449, 283]
 auto_select_hospitals: True
 
-eval_algorithms: ["centralized", "fedfed", "fedavg", "fedprox", "centralized"]
+eval_algorithms: ["centralized"]
 
 # Output settings
 output_path: "./output/evaluation_results"

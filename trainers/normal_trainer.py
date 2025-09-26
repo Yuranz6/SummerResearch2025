@@ -44,7 +44,7 @@ class NormalTrainer(object):
         self.model = model
 
         self.device = device
-        self.criterion = criterion.to(device)
+        self.criterion = criterion
         self.optimizer = optimizer
 
 

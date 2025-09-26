@@ -52,9 +52,9 @@ def create_loss(args, device=None, **kwargs):
         client_index = args.client_index
 
     if args.loss_fn == "CrossEntropy":
-        loss_fn = nn.CrossEntropyLoss()
+        loss_fn = F.binary_cross_entropy_with_logits
     elif args.loss_fn == "nll_loss":
-        loss_fn = nn.NLLLoss()
+        loss_fn = nn.NLLLoss() # should use functional?
     elif args.loss_fn == "focal":
         alpha = getattr(args, "focal_alpha", 0.85)
         gamma = getattr(args, "focal_gamma", 2.0)

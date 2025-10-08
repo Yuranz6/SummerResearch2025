@@ -95,13 +95,10 @@ class Data_Loader(object):
 
     def load_full_data(self):
         # no transforms needed for medical data
+        task = getattr(self.args, 'medical_task')
         MEAN, STD, train_transform, test_transform = 0.0, 1.0, None, None
-        
-        if hasattr(self.args, 'medical_task'):
-            self.full_data_obj.task = self.args.medical_task
-            
-        train_ds = self.full_data_obj(self.datadir, train=True, download=False, transform=train_transform)
-        test_ds = self.full_data_obj(self.datadir, train=False, download=False, transform=test_transform)
+        train_ds = self.full_data_obj(self.datadir, train=True, download=False, transform=train_transform, task=task)
+        test_ds = self.full_data_obj(self.datadir, train=False, download=False, transform=test_transform, task=task)
         
         return train_ds, test_ds
     

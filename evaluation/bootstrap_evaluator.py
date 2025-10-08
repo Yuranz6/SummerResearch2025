@@ -24,18 +24,19 @@ class BootstrapEvaluator:
         self.output_path = getattr(args, 'output_path', './output/evaluation_results/')
         os.makedirs(self.output_path, exist_ok=True)
         
+        self.regression = getattr(args, 'medical_task', 'death') == 'length'
+        
     def prepare_target_hospital_data(self, x_target, y_target, seed=42):
        
         if isinstance(x_target, torch.Tensor):
             x_target = x_target.cpu().numpy()
         if isinstance(y_target, torch.Tensor):
             y_target = y_target.cpu().numpy()
-            
         x_target_val, x_target_non_train, y_target_val, y_target_non_train = train_test_split(
             x_target, y_target,
             test_size=self.eval_val_size,
             random_state=seed,
-            stratify=y_target if len(np.unique(y_target)) > 1 else None
+            stratify=y_target if not self.regression else None
         )
         
         return {
@@ -50,14 +51,22 @@ class BootstrapEvaluator:
     def run_bootstrap_evaluation(self, model, target_data, algorithm_name, target_hospital_id):
         model.eval()
 
-        # Determine if this is regression or classification
         is_regression = getattr(self.args, 'medical_task', 'death') == 'length'
+        logging.info(f"Task: {getattr(self.args, 'medical_task', 'death')}")
+        logging.info(f"Is regression: {is_regression}")
+
+        # DEBUG: Check target value ranges
+        x_non_train = target_data['x_target_train']
+        y_non_train = target_data['y_target_train']
+        logging.info(f"DEBUG: Target value stats - min: {np.min(y_non_train):.6f}, max: {np.max(y_non_train):.6f}, mean: {np.mean(y_non_train):.6f}, std: {np.std(y_non_train):.6f}")
+        logging.info(f"DEBUG: First 10 target values: {y_non_train[:10]}")
+        logging.info(f"DEBUG: Target value type: {type(y_non_train)}, shape: {y_non_train.shape if hasattr(y_non_train, 'shape') else 'no shape'}")
 
         if is_regression:
             bootstrap_results = {
-                'loss': [],  # MSE loss
-                'mae': [],   # Mean Absolute Error
-                'rmse': []   # Root Mean Squared Error
+                'loss': [],  
+                'mae': [],   
+                'rmse': []   
             }
         else:
             bootstrap_results = {
@@ -66,7 +75,7 @@ class BootstrapEvaluator:
                 'auprc': [],
                 'f1_score': []
             }
-        # for now using the entire target hos data for eval
+        # Use full target hospital data for evaluation (original approach)
         x_non_train = target_data['x_target_train']
         y_non_train = target_data['y_target_train']
         
@@ -91,8 +100,33 @@ class BootstrapEvaluator:
                     # For regression: raw logits
                     y_pred = outputs.cpu().numpy()
 
+                    # DEBUG: Print ranges for first bootstrap iteration
+                    if seed_idx == 0:
+                        logging.info(f"DEBUG Bootstrap 0: y_true range [{np.min(y_true):.6f}, {np.max(y_true):.6f}], mean: {np.mean(y_true):.6f}")
+                        logging.info(f"DEBUG Bootstrap 0: y_pred range [{np.min(y_pred):.6f}, {np.max(y_pred):.6f}], mean: {np.mean(y_pred):.6f}")
+                        logging.info(f"DEBUG Bootstrap 0: First 5 y_true: {y_true[:5]}")
+                        logging.info(f"DEBUG Bootstrap 0: First 5 y_pred: {y_pred[:5]}")
+
+                        # CRITICAL DEBUG: Check if targets are in correct range
+                        zero_count = np.sum(y_true == 0)
+                        nonzero_count = np.sum(y_true != 0)
+                        logging.info(f"DEBUG Bootstrap 0: Target distribution - zeros: {zero_count}, non-zeros: {nonzero_count}, zero_ratio: {zero_count/len(y_true):.3f}")
+
+                        # Check target value statistics
+                        logging.info(f"DEBUG Bootstrap 0: y_true std: {np.std(y_true):.6f}")
+                        logging.info(f"DEBUG Bootstrap 0: y_pred std: {np.std(y_pred):.6f}")
+
+                        # Check for any preprocessing issues
+                        logging.info(f"DEBUG Bootstrap 0: y_true unique values count: {len(np.unique(y_true))}")
+                        if len(np.unique(y_true)) < 20:
+                            logging.info(f"DEBUG Bootstrap 0: y_true unique values: {np.unique(y_true)}")
+
                     mse_loss = mean_squared_error(y_true, y_pred)
                     bootstrap_results['loss'].append(mse_loss)
+
+                    # DEBUG: Print MSE for first few bootstrap iterations
+                    if seed_idx < 3:
+                        logging.info(f"DEBUG Bootstrap {seed_idx}: MSE = {mse_loss:.6f}")
 
                     mae = mean_absolute_error(y_true, y_pred)
                     bootstrap_results['mae'].append(mae)
@@ -136,11 +170,11 @@ class BootstrapEvaluator:
             processed_results[metric] = {
                 'raw_values': values.tolist(),
                 'valid_values': valid_values.tolist(),
-                'mean': np.mean(valid_values) if len(valid_values) > 0 else np.nan,
-                'std': np.std(valid_values) if len(valid_values) > 0 else np.nan,
-                'median': np.median(valid_values) if len(valid_values) > 0 else np.nan,
-                'min': np.min(valid_values) if len(valid_values) > 0 else np.nan,
-                'max': np.max(valid_values) if len(valid_values) > 0 else np.nan,
+                'mean': float(np.mean(valid_values)) if len(valid_values) > 0 else float('nan'),
+                'std': float(np.std(valid_values)) if len(valid_values) > 0 else float('nan'),
+                'median': float(np.median(valid_values)) if len(valid_values) > 0 else float('nan'),
+                'min': float(np.min(valid_values)) if len(valid_values) > 0 else float('nan'),
+                'max': float(np.max(valid_values)) if len(valid_values) > 0 else float('nan'),
                 'count_valid': len(valid_values),
                 'count_total': len(values)
             }

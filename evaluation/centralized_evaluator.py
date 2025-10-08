@@ -72,15 +72,36 @@ class CentralizedEvaluator:
                 train_targets = train_targets_local_ori_dict[client_idx]
 
                 train_data_tensor = torch.FloatTensor(train_data)
-                train_targets_tensor = torch.LongTensor(train_targets)
+                # Use FloatTensor for regression, LongTensor for classification
+                is_regression = getattr(self.args, 'medical_task', 'death') == 'length'
+                if is_regression:
+                    train_targets_tensor = torch.FloatTensor(train_targets)
+                else:
+                    train_targets_tensor = torch.LongTensor(train_targets)
 
                 all_x.append(train_data_tensor)
                 all_y.append(train_targets_tensor)
+
+                # # DEBUG: Check target values for first client
+                # if client_idx == 0:
+                #     logging.info(f"DEBUG: Client {client_idx} - target range: [{train_targets_tensor.min():.6f}, {train_targets_tensor.max():.6f}], mean: {train_targets_tensor.mean():.6f}")
+                #     logging.info(f"DEBUG: Client {client_idx} - first 10 targets: {train_targets_tensor[:10].tolist()}")
 
                 logging.info(f"  Hospital {client_idx}: {train_data_tensor.shape[0]} samples")
 
         combined_x = torch.cat(all_x, dim=0)
         combined_y = torch.cat(all_y, dim=0)
+
+        # # DEBUG: Check final combined training data
+        # logging.info(f"DEBUG: Final combined training data - x.shape: {combined_x.shape}, y.shape: {combined_y.shape}")
+        # logging.info(f"DEBUG: Combined targets - range: [{combined_y.min():.6f}, {combined_y.max():.6f}], mean: {combined_y.mean():.6f}, std: {combined_y.std():.6f}")
+        # logging.info(f"DEBUG: Combined targets - first 10: {combined_y[:10].tolist()}")
+        # logging.info(f"DEBUG: Combined targets - unique count: {len(torch.unique(combined_y))}")
+
+        # Count zeros vs non-zeros
+        zero_count = (combined_y == 0).sum().item()
+        nonzero_count = (combined_y != 0).sum().item()
+        logging.info(f"DEBUG: Target distribution - zeros: {zero_count}, non-zeros: {nonzero_count}, zero_ratio: {zero_count/len(combined_y):.3f}")
 
         logging.info(f"Total centralized training data: {combined_x.shape[0]} samples, {combined_x.shape[1]} features")
         logging.info(f"Class distribution: {combined_y.float().mean():.3f} positive rate")
@@ -114,7 +135,7 @@ class CentralizedEvaluator:
 
         combined_dataloader = self._combine_training_data(train_data_local_ori_dict, train_targets_local_ori_dict)
 
-        centralized_epochs = 300
+        centralized_epochs = getattr(self.args, 'comm_round', 100)
 
         logging.info(f"Starting centralized training for {centralized_epochs} epochs")
         logging.info(f"  Batch size: {self.args.batch_size}")

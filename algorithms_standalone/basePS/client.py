@@ -54,10 +54,15 @@ class Client(PSTrainer):
             self._set_local_traindata_property()
             logging.info(self.local_traindata_property)
         
+        
+        # CRITICAL BUG! classification vs. regression MSE needed
         if self.args.VAE_loss == 'focal':
-            self.loss = FocalLoss(alpha=0.25, gamma=2.0)
-        else: 
-            self.loss = F.cross_entropy
+            alpha = getattr(args, 'focal_alpha', 0.85)
+            self.loss = FocalLoss(alpha, gamma=2.0)
+        elif self.args.VAE_loss == 'CrossEntropy': 
+            self.loss = F.binary_cross_entropy_with_logits
+        else: # regression
+            self.loss = F.mse_loss
 
 # -------------------------Feature extraction setup------------------------#
         # self.feature_extractor = FeatureExtractor(output_dir=f"feature_analysis_client_{self.client_index}")
@@ -270,9 +275,11 @@ class Client(PSTrainer):
             
             # Compute performance-sensitive loss (trains VAE only)
             cross_entropy = self.loss(out_binary[:batch_size], y) # CE loss on rx_noise1 - gradients flow to VAE only
-            
-            
-            l1 = F.mse_loss(gx, x) # reconstruction loss on generated features (performance-robust)
+
+
+            # Question: Split reconstruction loss for mixed binary/continuous features ? NO! treat binary features as if continuous under FedFed's philosophy
+            # eICU data: 256 binary features (drugs + demographics) + 12 continuous features (lab values)
+            l1 = F.mse_loss(gx, x)
             l2 = cross_entropy # CE loss on noisy performance sensitive features - VAE training signal
             l3 = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
             l3 /= batch_size * self.vae_model.latent_dim # KL 
@@ -541,11 +548,14 @@ class Client(PSTrainer):
         
         
         
-    def _construct_mix_dataloader_medical(self, share_data1, share_y):        
+    def _construct_mix_dataloader_medical(self, share_data1, share_y):
         if share_data1 is not None:
-            # Sample only rx_noise1 (single xs version)
+            # Calculate positive ratio from local training data to match distribution
+            # local_pos_ratio = self.train_ori_targets.sum() / len(self.train_ori_targets)
+
+            # Sample only rx_noise1 (single xs version) with same distribution as local data
             rx_noise1_sampled, share_labels1 = self._sample_shared_data_proportional(
-                share_data1, share_y
+                share_data1, share_y, pos_proportion=0.30
             )
             
             ori_data_tensor = torch.FloatTensor(self.train_ori_data)

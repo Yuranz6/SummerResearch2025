@@ -27,8 +27,8 @@ def create_optimizer(args, model=None, params=None, **kwargs):
             optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, params_to_optimizer),
                 lr=args.lr, weight_decay=args.wd, momentum=args.momentum, nesterov=args.nesterov)
         elif args.server_optimizer == "adam":
-            optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, params_to_optimizer),
-                lr=args.lr, weight_decay=args.wd, amsgrad=True)
+            optimizer = torch.optim.Adam(params_to_optimizer,
+                lr=args.lr, weight_decay=args.wd)
         elif args.server_optimizer == "no":
             optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, params_to_optimizer),
                 lr=args.lr, weight_decay=args.wd, momentum=args.momentum, nesterov=args.nesterov)
@@ -39,7 +39,8 @@ def create_optimizer(args, model=None, params=None, **kwargs):
             optimizer = torch.optim.SGD(params_to_optimizer,
                 lr=args.lr, weight_decay=args.wd, momentum=args.momentum, nesterov=args.nesterov)
         elif args.client_optimizer == "adam":
-            raise NotImplementedError
+            optimizer = torch.optim.Adam(params_to_optimizer,
+                lr=args.lr, weight_decay=args.wd)
         elif args.client_optimizer == "no":
             optimizer = torch.optim.SGD(params_to_optimizer,
                 lr=args.lr, weight_decay=args.wd, momentum=args.momentum, nesterov=args.nesterov)

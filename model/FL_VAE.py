@@ -416,7 +416,7 @@ class FL_CVAE_Medical(AbstractAutoEncoder):
         xi_decoded = self.decode(hi_projected)
         xi = self.decoder_last(xi_decoded)
         xi = self.xi_bn(xi)
-        xi = torch.sigmoid(xi)  # Changed from tanh to sigmoid for binary medical features 
+        xi = torch.sigmoid(xi)
      
         
         if self.with_classifier:

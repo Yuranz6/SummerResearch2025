@@ -9,6 +9,7 @@ import sys
 import argparse
 import logging
 import torch
+import numpy as np
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath('.'))
@@ -22,25 +23,22 @@ def setup_logging():
     logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 def create_mock_args(config_path='configs/eicu_config.yaml'):
-    """Create args object using existing config system"""
     cfg = get_cfg()
     
     # Parse minimal args
     class MockArgs:
         def __init__(self):
             self.config_file = config_path
-            self.medical_task = 'death'
+            # Remove hardcoded medical_task - let config file determine it
             self.opts = []
-    
+
     mock_args = MockArgs()
     cfg.setup(mock_args)
-    cfg.medical_task = 'death'
     cfg.mode = 'standalone'
     
     return cfg
 
 def extract_target_hospital_data(test_data_global_dl):
-    """Extract target hospital data from global test dataloader"""
     all_x, all_y = [], []
     for batch_x, batch_y in test_data_global_dl:
         all_x.append(batch_x)
@@ -56,7 +54,6 @@ def extract_target_hospital_data(test_data_global_dl):
         return None
 
 def extract_train_data_loaders(train_data_local_ori_dict, train_targets_local_ori_dict, batch_size, client_num):
-    """Create proper training data loaders from raw training data for each client"""
     import torch.utils.data as data
     
     train_data_loaders = []
@@ -67,7 +64,12 @@ def extract_train_data_loaders(train_data_local_ori_dict, train_targets_local_or
             train_targets = train_targets_local_ori_dict[client_idx]
             
             train_data_tensor = torch.FloatTensor(train_data)
-            train_targets_tensor = torch.LongTensor(train_targets)
+            # Use FloatTensor for regression, LongTensor for classification
+            is_regression = len(np.unique(train_targets)) > 10
+            if is_regression:
+                train_targets_tensor = torch.FloatTensor(train_targets)
+            else:
+                train_targets_tensor = torch.LongTensor(train_targets)
             
             client_dataset = data.TensorDataset(train_data_tensor, train_targets_tensor)
             client_dataloader = data.DataLoader(
@@ -86,21 +88,9 @@ def main():
     
     args = create_mock_args('configs/eicu_config.yaml')
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    print(f"Dataset: {args.dataset}")
-    print(f"Target Hospital: {args.target_hospital_id}")
-    print(f"Bootstrap Seeds: {args.bootstrap_seeds}")
-    print(f"Device: {device}")
-    print(f"Algorithms: {args.eval_algorithms}")
-    
     # Load data using existing preprocessing pipeline
     print("\nLoading data using existing preprocessing pipeline...")
     
-    print(f"=== DEBUG: Using consistent parameters with BasePSManager ===")
-    print(f"  num_workers: {getattr(args, 'data_load_num_workers', 1)} (from config vs hardcoded 4)")
-    print(f"  data_sampler: {getattr(args, 'data_sampler', 'random')} (from config vs hardcoded 'random')")
-    print(f"  resize: {getattr(args, 'dataset_load_image_size', 32)} (from config vs hardcoded 32)")
-    print(f"  augmentation: {getattr(args, 'dataset_aug', 'default')} (from config vs hardcoded 'default')")
     
     train_data_global_num, test_data_global_num, train_data_global_dl, test_data_global_dl, \
     train_data_local_num_dict, test_data_local_num_dict, test_data_local_dl_dict, \
@@ -183,23 +173,27 @@ def main():
                 algorithms = list(comparison_results['results'].keys())
                 print(f"Found results for: {algorithms}")
                 
+                is_regression = getattr(args, 'medical_task', 'death') == 'length'
+                primary_metric = 'loss' if is_regression else 'auprc'
+
                 fig, ax = vis.create_algorithm_comparison_boxplot(
-                    comparison_results, metric='auprc', target_hospital_id=args.target_hospital_id
+                    comparison_results, metric=primary_metric, target_hospital_id=args.target_hospital_id
                 )
-                
+
                 if fig:
                     import matplotlib.pyplot as plt
-                    plot_path = f'{args.output_path}/comparison_hospital_{args.target_hospital_id}_auprc.png'
+                    plot_path = f'{args.output_path}/comparison_hospital_{args.target_hospital_id}_{primary_metric}.png'
                     fig.savefig(plot_path, dpi=300, bbox_inches='tight')
                     plt.close()
                     print(f"Plot saved: {plot_path}")
-                    
+
                     print(f"\nResults Summary (Hospital {args.target_hospital_id}):")
                     for alg in algorithms:
-                        if 'auprc' in comparison_results['results'][alg]:
-                            mean_val = comparison_results['results'][alg]['auprc']['mean']
-                            std_val = comparison_results['results'][alg]['auprc']['std']
-                            print(f"  {alg.upper()}: {mean_val:.4f} ± {std_val:.4f}")
+                        if primary_metric in comparison_results['results'][alg]:
+                            mean_val = comparison_results['results'][alg][primary_metric]['mean']
+                            std_val = comparison_results['results'][alg][primary_metric]['std']
+                            metric_label = "MSE" if primary_metric == 'loss' and is_regression else primary_metric.upper()
+                            print(f"  {alg.upper()}: {mean_val:.4f} ± {std_val:.4f} ({metric_label})")
                 else:
                     print("Failed to create plot")
             else:

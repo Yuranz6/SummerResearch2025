@@ -9,9 +9,9 @@ from sklearn.model_selection import train_test_split
 
 from .datasets import eICU_Medical_Dataset, eICU_Medical_Dataset_truncated_WO_reload, data_transforms_eicu
 
-def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospital=10, test_size=0.2, 
+def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospital=10, test_size=0.2,
                                    unseen_hospital_test=False, target_hospital_id=None,
-                                   target_hospital_list=None, auto_select_hospitals=True):
+                                   target_hospital_list=None, auto_select_hospitals=True, medical_task='death'):
     """
     partition eICU data naturally by hospital IDs with adaptive hospital selection
     
@@ -98,12 +98,12 @@ def partition_eicu_data_by_hospital(dataset, client_num, min_samples_per_hospita
         hospital_id = selected_hospitals[client_idx]                                                 
         hospital_indices = np.array(hospital_to_indices[hospital_id])
         hospital_targets = dataset.targets[hospital_indices]
-        
+        print("regression: ", len(np.unique(hospital_targets)) > 10)
         train_indices, test_indices = train_test_split(
             hospital_indices,
             test_size=test_size,
             random_state=42,
-            stratify=hospital_targets
+            stratify=None if len(np.unique(hospital_targets)) > 10 else hospital_targets
         )
         
         dict_users_train[client_idx] = train_indices

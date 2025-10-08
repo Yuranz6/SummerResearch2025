@@ -179,8 +179,10 @@ _C.VAE_curriculum = True
 # ---------------------------------------------------------------------------- #
 # Medical task settings
 # ---------------------------------------------------------------------------- #
-_C.medical_task = 'death'  # Options: 'death', 'ventilation', 'sepsis'
+_C.medical_task = 'length'  # Options: 'death', 'ventilation', 'sepsis', 'length'
 _C.VAE_input_dim = 268
+_C.VAE_binary_dims = 256  # Binary features (drugs + demographics)
+_C.VAE_continuous_dims = 12  # Continuous features (lab values)
 _C.dropout_rate = 0.2
 _C.use_batch_norm = True
 _C.unseen_hospital_test = False

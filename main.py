@@ -20,8 +20,8 @@ def add_args(parser):
     Add medical-specific arguments
     """
     parser.add_argument("--config_file", default="configs/eicu_config.yaml", type=str)
-    parser.add_argument("--medical_task", default="death", type=str,
-                       choices=['death', 'ventilation', 'sepsis'],
+    parser.add_argument("--medical_task", default="length", type=str,
+                       choices=['death', 'ventilation', 'sepsis', 'length'],
                        help="Medical prediction task")
     parser.add_argument("opts", help="Modify config options using the command-line",
                        default=None, nargs=argparse.REMAINDER)
@@ -33,22 +33,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     args = add_args(parser)
     
-    # Print args to see what it contains
-    print("=== ARGS CONTENTS ===")
-    print(f"args.config_file: {args.config_file}")
-    print(f"args.medical_task: {args.medical_task}")
-    print(f"args.opts: {args.opts}")
-    print(f"All args attributes: {vars(args)}")
-    print("=====================")
     
     # Setup configuration
     cfg = get_cfg()
     cfg.setup(args)
     
-    # Override with medical task
-    if hasattr(args, 'medical_task'):
-        print("success")
-        cfg.medical_task = args.medical_task
+    # Only override medical_task if explicitly provided on command line
+    # Don't override with argparse defaults - let YAML config take precedence
+    # if hasattr(args, 'medical_task'):
+    #     print("success")
+    #     cfg.medical_task = args.medical_task
     
     # Force standalone mode
     cfg.mode = 'standalone'

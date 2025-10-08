@@ -216,6 +216,34 @@ class NormalTrainer(object):
 
             loss = self.criterion(out, y.float())
 
+            # # DEBUG: Print training dynamics for first epoch, first few batches
+            # if epoch == 1 and batch_idx < 3:
+            #     print(f"DEBUG TRAIN epoch {epoch} batch {batch_idx}:")
+            #     print(f"  out.shape={out.shape}, y.shape={y.shape}")
+            #     print(f"  out range: [{out.min().item():.6f}, {out.max().item():.6f}], mean: {out.mean().item():.6f}")
+            #     print(f"  y range: [{y.min().item():.6f}, {y.max().item():.6f}], mean: {y.float().mean().item():.6f}")
+            #     print(f"  loss: {loss.item():.6f}")
+            #     print(f"  First 5 predictions: {out[:5].detach().cpu().numpy()}")
+            #     print(f"  First 5 targets: {y[:5].detach().cpu().numpy()}")
+
+            #     # CRITICAL DEBUG: Check target distribution in training data
+            #     y_np = y.detach().cpu().numpy()
+            #     zero_count = np.sum(y_np == 0)
+            #     nonzero_count = np.sum(y_np != 0)
+            #     print(f"  Target distribution - zeros: {zero_count}, non-zeros: {nonzero_count}, zero_ratio: {zero_count/len(y_np):.3f}")
+            #     print(f"  Target std: {y_np.std():.6f}")
+            #     print(f"  Prediction std: {out.detach().cpu().numpy().std():.6f}")
+
+            #     # Check loss computation manually
+            #     manual_mse = ((out - y.float())**2).mean().item()
+            #     print(f"  Manual MSE: {manual_mse:.6f} (should match loss)")
+
+            #     # Check criterion type
+            #     print(f"  Criterion type: {type(self.criterion)}")
+
+            # # DEBUG: Print loss every 50 batches in first epoch
+            # if epoch == 1 and batch_idx % 50 == 0:
+            #     print(f"DEBUG TRAIN epoch {epoch} batch {batch_idx}: loss = {loss.item():.6f}, out_mean = {out.mean().item():.6f}, y_mean = {y.float().mean().item():.6f}")
             # ========================FedProx=====================#
             if self.args.fedprox:
                 fed_prox_reg = 0.0
@@ -234,7 +262,7 @@ class NormalTrainer(object):
                 is_regression = getattr(self.args, 'medical_task', 'death') == 'length'
                 if is_regression:
                     # For regression: no accuracy calculation
-                    accuracy = 0.0  # Placeholder
+                    accuracy = 0.0 
                 else:
                     # For classification: calculate accuracy
                     probs = torch.sigmoid(out)
@@ -243,7 +271,9 @@ class NormalTrainer(object):
                     accuracy = correct / batch_size * 100
             
             loss_avg.update(loss.data.item(), batch_size)
-            acc.update(accuracy.item(), batch_size)
+            # Handle both tensor and float accuracy values
+            acc_value = accuracy.item() if hasattr(accuracy, 'item') else accuracy
+            acc.update(acc_value, batch_size)
             
             # if (batch_idx + 1) % 30 == 0:
             #     logging.info('| Epoch [%3d] Iter[%3d/%3d]\t\tLoss: %.4f Acc@1: %.3f%%' %
@@ -321,11 +351,16 @@ class NormalTrainer(object):
                     accuracy = correct / batch_size * 100
             
             loss_avg.update(loss.data.item(), batch_size)
-            acc.update(accuracy.item(), batch_size)
+            # Handle both tensor and float accuracy values
+            acc_value = accuracy.item() if hasattr(accuracy, 'item') else accuracy
+            acc.update(acc_value, batch_size)
             
             if (batch_idx + 1) % 50 == 0:
                 logging.info('| Epoch [%3d] Iter[%3d/%3d]\t\tLoss: %.4f Acc@1: %.3f%%' %
                             (epoch, batch_idx + 1, len(trainloader), loss_avg.avg, acc.avg))
+        # DEBUG: Print epoch summary
+        # logging.info(f"  Epoch {epoch} - Avg Loss: {loss_avg.avg:.6f}, Avg Acc: {acc.avg:.3f}")
+
         return loss_avg.avg # don't need to return
 
 
@@ -360,6 +395,16 @@ class NormalTrainer(object):
                 
                 loss = self.criterion(out, targets_float)
                 total_loss += loss.item() * features.size(0)
+
+                # DEBUG: Print test dynamics for first batch
+                if batch_idx == 0:
+                    print(f"DEBUG TEST round {round} batch {batch_idx}:")
+                    print(f"  out.shape={out.shape}, targets.shape={targets_float.shape}")
+                    print(f"  out range: [{out.min().item():.6f}, {out.max().item():.6f}], mean: {out.mean().item():.6f}")
+                    print(f"  targets range: [{targets_float.min().item():.6f}, {targets_float.max().item():.6f}], mean: {targets_float.mean().item():.6f}")
+                    print(f"  batch loss: {loss.item():.6f}")
+                    print(f"  First 5 test predictions: {out[:5].detach().cpu().numpy()}")
+                    print(f"  First 5 test targets: {targets_float[:5].detach().cpu().numpy()}")
 
                 is_regression = getattr(self.args, 'medical_task', 'death') == 'length'
                 if is_regression:

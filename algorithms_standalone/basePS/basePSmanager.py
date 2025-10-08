@@ -351,7 +351,6 @@ class BasePSManager(object):
         self.aggregator.save_classifier()
         self._save_training_results()
         
-        # Bootstrap evaluation integration
         self._run_bootstrap_evaluation()
         
 

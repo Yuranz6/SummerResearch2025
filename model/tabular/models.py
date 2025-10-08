@@ -13,7 +13,7 @@ class Medical_MLP_Classifier(nn.Module):
     """
     
     def __init__(self, input_dim=268, num_classes=1, hidden_dims=[128, 64],
-                 dropout_rate=0.2, use_batch_norm=False, linear_regression=False):
+                 dropout_rate=0.2, use_batch_norm=False):
         
         super(Medical_MLP_Classifier, self).__init__()
         
@@ -22,7 +22,6 @@ class Medical_MLP_Classifier(nn.Module):
         self.hidden_dims = hidden_dims
         self.dropout_rate = dropout_rate
         self.use_batch_norm = use_batch_norm
-        self.linear_regression = linear_regression
         
         layers = []
         prev_dim = input_dim
@@ -63,7 +62,6 @@ class Medical_MLP_Classifier(nn.Module):
     
     def forward(self, x):
         logits = self.classifier(x)
-
         return logits
     
     def predict_proba(self, x):

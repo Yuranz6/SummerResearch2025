@@ -51,19 +51,23 @@ def create_loss(args, device=None, **kwargs):
     else:
         client_index = args.client_index
 
-    if args.loss_fn == "CrossEntropy":
-        loss_fn = F.binary_cross_entropy_with_logits
-    elif args.loss_fn == "nll_loss":
-        loss_fn = nn.NLLLoss() # should use functional?
-    elif args.loss_fn == "focal":
-        alpha = getattr(args, "focal_alpha", 0.85)
-        gamma = getattr(args, "focal_gamma", 2.0)
-        loss_fn = FocalLoss(alpha=alpha, gamma=gamma)
-    elif args.loss_fn == "mse":
+    is_regression = getattr(args, 'medical_task', 'death') == 'length'
+    
+
+    if is_regression:
         loss_fn = nn.MSELoss()
     else:
-        raise NotImplementedError
-
+        # classification 
+        if args.loss_fn == "CrossEntropy":
+            loss_fn = F.binary_cross_entropy_with_logits
+        elif args.loss_fn == "nll_loss":
+            loss_fn = nn.NLLLoss()
+        elif args.loss_fn == "focal":
+            alpha = getattr(args, "focal_alpha", 0.85)
+            gamma = getattr(args, "focal_gamma", 2.0)
+            loss_fn = FocalLoss(alpha=alpha, gamma=gamma)
+        else:
+            raise NotImplementedError("Loss not implemented")
     return loss_fn
 
 

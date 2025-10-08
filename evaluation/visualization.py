@@ -32,9 +32,6 @@ class Visualization:
         """
         boxplot comparing algorithms
         """
-        if results_data is None:
-            logging.error("NO RESULTS")
-            return None
             
         algorithms = []
         metric_values = []
@@ -220,7 +217,13 @@ class Visualization:
         return df
     1
     
-    def create_grouped_boxplot(self, hospital_ids, metric='auprc', algorithms=['fedavg', 'fedprox', 'fedfed']):
+    def create_grouped_boxplot(self, hospital_ids, metric=None, algorithms=['fedavg', 'fedprox', 'fedfed'], args=None):
+        # Auto-detect metric if not provided
+        if metric is None:
+            if args and getattr(args, 'medical_task', 'death') == 'length':
+                metric = 'loss'  # Regression
+            else:
+                metric = 'auprc'  # Classification
 
         all_data = []
         
@@ -241,7 +244,11 @@ class Visualization:
         
         
         df = pd.DataFrame(all_data)
-        
+
+        if df.empty:
+            logging.error(f"No data found for metric '{metric}'. Available metrics might be different for this task type.")
+            return None, None
+
         fig, ax = plt.subplots(figsize=(14, 6))
         
         sns.boxplot(

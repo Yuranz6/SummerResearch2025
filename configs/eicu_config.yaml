@@ -6,9 +6,11 @@ medical_task: "death" # Options: 'death', 'ventilation', 'sepsis', 'length'
 model: "medical_mlp"
 model_output_dim: 1
 model_input_channels: 1
-num_classes: 2
+num_classes: 2 # 1 for regression, 2 for classification: 2 (binary), for regression: 1
 
 VAE_input_dim: 268 # need double check
+VAE_binary_dims: 256 # Binary features (drugs + demographics)
+VAE_continuous_dims: 12 # Continuous features (lab values)
 dropout_rate: 0.2
 use_batch_norm: True
 
@@ -20,6 +22,10 @@ comm_round: 300
 global_epochs_per_round: 5
 partition_method: "hospital"
 
+# Optimizer configuration
+client_optimizer: "sgd" # sgd, adam, no
+server_optimizer: "sgd"
+
 fedprox: False
 fedprox_mu: 0.05
 
@@ -30,10 +36,10 @@ VAE_client_num_per_round: 9
 VAE_local_epoch: 2
 
 # VAE loss weights
-VAE_re: 4.0
+VAE_re: 5.0
 VAE_ce: 3.0
 VAE_kl: 0.005
-VAE_x_ce: 0.5
+VAE_x_ce: 0.4
 
 # VAE architecture
 VAE_d: 128 # Hidden dimension
@@ -49,9 +55,9 @@ batch_size: 64
 VAE_batch_size: 64
 lr: 0.0001
 wd: 0.0001 # weight decay
-VAE_loss: "focal"
+VAE_loss: "focal" #  options: classification - CrossEntropy, focal | regression: mse
 
-loss_fn: "CrossEntropy" # for federated model training & eval: CrossEntropy, focal or mse
+loss_fn: "focal" # for federated model training & eval: CrossEntropy(classificatio), focal or mse(regression)
 focal_alpha: 0.85
 focal_gamma: 2.0
 seed: 42
@@ -64,10 +70,10 @@ VAE_alpha: 0.0 # No mixup
 VAE_aug_batch_size: 64
 
 # VAE balanced training (VERY IMPORTANT!)
-VAE_target_pos_ratio: 0.15
+VAE_target_pos_ratio: null # Use original imbalanced distribution - let Focal Loss handle imbalance
 
 # Feature extraction for visualization
-extract_features: true
+extract_features: False
 
 # Other settings
 sched: "no"
@@ -92,7 +98,7 @@ eval_metric: "auprc" # need change depending on classification/regression: loss/
 target_hospital_list: [167, 420, 199, 458, 252, 165, 148, 281, 449, 283]
 auto_select_hospitals: True
 
-eval_algorithms: ["centralized"]
+eval_algorithms: ["fedfed", "fedavg", "centralized"]
 
 # Output settings
 output_path: "./output/evaluation_results"

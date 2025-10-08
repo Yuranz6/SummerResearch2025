@@ -55,8 +55,13 @@ class eICU_Medical_Dataset(data.Dataset):
             y = df['sepsis'].values.astype(np.float32)
         elif self.task == 'length':
             y = df['length_of_stay'].values.astype(np.float32)
+            print(f"DEBUG: Loading length_of_stay values, task='{self.task}', shape: {y.shape}")
+            print(f"DEBUG: Length_of_stay stats - min: {np.min(y):.6f}, max: {np.max(y):.6f}, mean: {np.mean(y):.6f}, std: {np.std(y):.6f}")
+            print(f"DEBUG: First 10 length_of_stay values: {y[:10]}")
+            print(f"DEBUG: Unique values count: {len(np.unique(y))}")
         else:
             y = df['death'].values.astype(np.float32)
+            # print(f"DEBUG: Loading death values, task='{self.task}', first 10 values: {y[:10]}") 
         
         hospital_ids = df['hospitalid'].values
         
